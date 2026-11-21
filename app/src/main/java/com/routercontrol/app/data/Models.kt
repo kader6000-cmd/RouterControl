@@ -66,7 +66,9 @@ data class DeviceFetch(
     /** Result of loading the local-network view page (Diagnostics). */
     val debugViewStatus: String = "",
     /** Full URL fragments mentioning a data script in the router pages (Diagnostics). */
-    val debugDeviceUrls: List<String> = emptyList()
+    val debugDeviceUrls: List<String> = emptyList(),
+    /** JavaScript initializer used by the router UI to query connected devices. */
+    val debugDeviceInitializer: String = ""
 )
 
 /** Result of a router call. `raw` is a short snippet of the router reply, for Diagnostics. */
