@@ -542,22 +542,32 @@ class RouterClient {
         }
     }
 
+    /** Last anonymous-session probe, retained even when it fails so Diagnostics can show it. */
+    private var anonymousProbeDiagnostics: String = ""
+
     private fun fetchAnonymousDevices(host: String): DeviceFetch? {
+        val probe = mutableListOf<String>()
+        fun record(label: String, result: Pair<Int, String>) {
+            probe.add("$label: HTTP ${result.first} — ${result.second.take(420).replace("\n", " ")}")
+            anonymousProbeDiagnostics = probe.joinToString("\n").take(2400)
+        }
         return try {
             // Establish the anonymous router session before querying menu data.
-            anonymousGet("$host/", host)
+            record("ANON root", anonymousGet("$host/", host))
             val (viewCode, viewBody) = anonymousGet(
                 "$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}", host
-            )
+            ).also { record("ANON localNetStatus", it) }
             val tags = extractLuaTags(viewBody)
             val urls = extractLuaUrls(viewBody)
             val found = linkedMapOf<String, RouterDevice>()
             val snippets = mutableListOf<String>()
             for (script in listOf("accessdev_landevs_lua.lua", "accessdev_ssiddev_lua.lua")) {
-                val (_, body) = anonymousGet(
+                val response = anonymousGet(
                     "$host/?_type=menuData&_tag=$script&_=${nextGuid()}", host
                 )
-                snippets.add("$script: ${body.take(500)}")
+                record("ANON $script", response)
+                val body = response.second
+                snippets.add("$script: HTTP ${response.first} ${body.take(500)}")
                 if (body.contains("SessionTimeout")) continue
                 val type = if (script.contains("lande")) "LAN" else "WLAN"
                 // H288A returns different XML container names for LAN and WLAN.
@@ -573,13 +583,15 @@ class RouterClient {
             if (found.isEmpty()) null else DeviceFetch(
                 devices = found.values.sortedBy { it.name.lowercase(Locale.US) },
                 debugTags = tags,
-                debugSnippet = snippets.joinToString("\n").take(1200),
-                debugViewStatus = "anonymous localNetStatus: HTTP $viewCode — HTML",
+                debugSnippet = (snippets.joinToString("\n") + "\n" + anonymousProbeDiagnostics).take(2400),
+                debugViewStatus = "anonymous localNetStatus: HTTP $viewCode — HTML\n" + anonymousProbeDiagnostics,
                 debugDeviceUrls = urls,
                 debugDeviceInitializer = "تم جلب الأجهزة عبر جلسة الراوتر المجهولة (ANON_COOKIE) بدون تسجيل دخول جديد."
             )
-        } catch (_: Exception) {
-            null // Fall back to the authenticated flow and preserve its diagnostics.
+        } catch (e: Exception) {
+            probe.add("ANON exception: ${e.message ?: e.javaClass.simpleName}")
+            anonymousProbeDiagnostics = probe.joinToString("\n").take(2400)
+            null // Fall back to the authenticated flow and preserve anonymous diagnostics.
         }
     }
 
@@ -588,6 +600,7 @@ class RouterClient {
         mutex.withLock {
             try {
                 val host = base(settings)
+                anonymousProbeDiagnostics = ""
                 fetchAnonymousDevices(host)?.let { return@withContext it }
                 if (!loggedIn) {
                     val login = loginUnLocked(settings)
@@ -751,7 +764,12 @@ class RouterClient {
                         deviceInitializer
                     )
                 }
-                result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
+                val finalResult = result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
+                if (anonymousProbeDiagnostics.isNotBlank()) finalResult.copy(
+                    debugSnippet = ("--- محاولة ANON_COOKIE ---\n" + anonymousProbeDiagnostics +
+                        "\n--- المحاولة المسجلة ---\n" + finalResult.debugSnippet).take(3200),
+                    debugViewStatus = (finalResult.debugViewStatus + "\nANON probe محفوظ في رد الأجهزة الخام").trim()
+                ) else finalResult
             } catch (e: Exception) {
                 DeviceFetch(emptyList(), "فشل جلب الأجهزة: ${e.message ?: "خطأ غير معروف"}")
             }
