@@ -534,6 +534,9 @@ class RouterClient {
             .header("Accept", "application/json, text/javascript, */*; q=0.01")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
             .header("Referer", "$host/")
+            // H288A firmware accepts the public device-data session only when the
+            // anonymous SID is sent explicitly; it does not always Set-Cookie it.
+            .header("Cookie", "SID_HTTPS_=ANON_COOKIE")
         anonymousHttp.newCall(builder.get().build()).execute().use { response ->
             return response.code to (response.body?.string() ?: "")
         }
@@ -557,7 +560,14 @@ class RouterClient {
                 snippets.add("$script: ${body.take(500)}")
                 if (body.contains("SessionTimeout")) continue
                 val type = if (script.contains("lande")) "LAN" else "WLAN"
-                val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", type)
+                // H288A returns different XML container names for LAN and WLAN.
+                val parsed = if (type == "LAN") {
+                    parseAccessDevices(body, "OBJ_ACCESSDEV_ID", type) +
+                        parseAccessDevices(body, "OBJ_LAN_DEVICE_ID", type)
+                } else {
+                    parseAccessDevices(body, "OBJ_WLAN_AD_ID", type) +
+                        parseAccessDevices(body, "OBJ_ACCESSDEV_ID", type)
+                }
                 for (device in parsed) found.putIfAbsent(device.mac, device)
             }
             if (found.isEmpty()) null else DeviceFetch(
