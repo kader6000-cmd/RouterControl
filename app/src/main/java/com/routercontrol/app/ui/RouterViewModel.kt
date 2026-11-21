@@ -225,17 +225,46 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, message = "بفحص عنوان صفحة التحكم الأبوي...") }
             val settings = store.loadSettings()
-            val entries = ParentalSync.probe(client, settings)
-            val working = entries.firstOrNull { it.ok }?.label
-            if (working != null) {
-                store.saveSettings(settings.copy(parentalScript = working))
-                _state.update { it.copy(settings = settings.copy(parentalScript = working)) }
+            val fetched = ParentalSync.fetchRules(client, settings)
+            val entries = fetched.entries
+            val tag = fetched.tag
+            if (tag.isNotBlank()) {
+                store.saveSettings(settings.copy(parentalScript = tag))
+                _state.update { it.copy(settings = settings.copy(parentalScript = tag)) }
+            }
+            // Sync the real rules from the router: keep local names/schedules,
+            // take the router's instance id + enabled state (that is what the
+            // toggle needs to work by _InstID).
+            if (fetched.rules.isNotEmpty()) {
+                val current = _state.value.rules
+                val merged = fetched.rules.map { remote ->
+                    val local = current.firstOrNull {
+                        it.name.equals(remote.name, ignoreCase = true) ||
+                            (it.mac.isNotBlank() && remote.mac.isNotBlank() && it.mac.equals(remote.mac, ignoreCase = true))
+                    }
+                    if (local != null) {
+                        local.copy(
+                            enabled = remote.enabled,
+                            instanceId = remote.instanceId,
+                            mac = if (local.mac.isBlank()) remote.mac else local.mac,
+                            pendingSync = false
+                        )
+                    } else {
+                        remote
+                    }
+                }
+                store.saveRules(merged)
+                _state.update { it.copy(rules = merged) }
             }
             _state.update {
                 it.copy(
                     loading = false,
                     diagnostics = entries,
-                    message = if (working != null) "لقينا عنوان شغال: $working" else "مفيش عنوان من المقترحات رد — شوف صفحة التشخيص"
+                    message = when {
+                        fetched.rules.isNotEmpty() -> "لقينا ${fetched.rules.size} قاعدة من الروتر — ${fetched.tag}"
+                        tag.isNotBlank() -> "لقينا عنوان شغال: $tag"
+                        else -> "مفيش عنوان من المقترحات رد — شوف صفحة التشخيص"
+                    }
                 )
             }
         }
