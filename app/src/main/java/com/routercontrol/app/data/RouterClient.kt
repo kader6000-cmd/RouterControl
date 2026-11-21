@@ -24,11 +24,15 @@ import javax.xml.parsers.DocumentBuilderFactory
  * verified; its own reverse-engineering notes at
  * github.com/juacas/zte_tracker/tree/master/custom_components/zte_tracker/zteclient):
  *
- *  LOGIN — 3-step challenge-response:
- *   1. GET  /?_type=loginData&_tag=login_token&_=<guid>
- *      -> XML body, the text inside <ajax_response_xml_root> is the numeric challenge token.
- *   2. GET  /?_type=loginData&_tag=login_entry
+ *  LOGIN — 3-step challenge-response (v1.8.3: entry FIRST, then token —
+ *   the entry call creates the pre-auth session; token-first left a session
+ *   that answered SessionTimeout to menuData on this firmware):
+ *   0. GET  /  (browser-style page load; sets _TESTCOOKIESUPPORT/SID cookies,
+ *      captures the shell HTML for the device-JS scan)
+ *   1. GET  /?_type=loginData&_tag=login_entry
  *      -> JSON {"lockingTime":0,"loginErrMsg":"","sess_token":"..."}.
+ *   2. GET  /?_type=loginData&_tag=login_token&_=<guid>
+ *      -> XML body, the text inside <ajax_response_xml_root> is the numeric challenge token.
  *   3. POST /?_type=loginData&_tag=login_entry  (form, x-www-form-urlencoded)
  *      action=login & Username=<admin> & Password=SHA256(password + token) & _sessionTOKEN=<sess_token>
  *      -> JSON with a new sess_token; login_need_refresh=1 means re-login is required.
@@ -145,25 +149,19 @@ class RouterClient {
                     return@withContext RouterResult.Failure("عنوان الروتر مش صحيح — مثال: 192.168.1.1")
                 }
                 refererBase = host
-                // Browser-style page load first: sets the router's cookies
-                // (_TESTCOOKIESUPPORT / SID) the way a real page load does.
-                // zte_tracker notes that without this, some endpoints answer
-                // SessionTimeout. Best effort — login decides success.
+                // Match the verified ZTE login sequence: login_entry FIRST creates
+                // the pre-auth session token/cookie; only then request login_token.
+                // Reversing these two calls can leave a valid-looking HTTP session
+                // that answers SessionTimeout to every menuData endpoint.
+                // Browser-style page load first (kept): sets the router's cookies
+                // (_TESTCOOKIESUPPORT / SID) the way a real page load does, and
+                // captures the shell HTML for the device-JS scan. zte_tracker notes
+                // that without this, some endpoints answer SessionTimeout.
                 try {
                     rootPageHtml = get("$host/").second
                 } catch (e: Exception) {
                     // Ignore; the login steps below will fail loudly if unreachable.
                 }
-                // Step 1: challenge token (XML text).
-                val (_, tokenBody) = get("$host/?_type=loginData&_tag=login_token&_=${nextGuid()}")
-                val token = tokenBody.replace(Regex("<[^>]+>"), "").trim()
-                if (token.isBlank()) {
-                    return@withContext RouterResult.Failure(
-                        "الروتر مردّش على طلب الدخول — اتأكد إنك على نفس الواي فاي وإن العنوان صح",
-                        tokenBody.take(200)
-                    )
-                }
-                // Step 2: session entry (JSON with sess_token + lockingTime).
                 val (_, entryBody) = get("$host/?_type=loginData&_tag=login_entry")
                 val entry = org.json.JSONObject(entryBody)
                 val locking = entry.optInt("lockingTime", 0)
@@ -178,6 +176,15 @@ class RouterClient {
                     return@withContext RouterResult.Failure("الروتر مردّش بجلسة دخول — جرّب تاني", entryBody.take(200))
                 }
                 sessToken = sess
+                // Step 2: challenge token, after the pre-auth session is established.
+                val (_, tokenBody) = get("$host/?_type=loginData&_tag=login_token&_=${nextGuid()}")
+                val token = tokenBody.replace(Regex("<[^>]+>"), "").trim()
+                if (token.isBlank()) {
+                    return@withContext RouterResult.Failure(
+                        "الروتر مردّش على رمز الدخول — راجع اتصالك بالراوتر",
+                        tokenBody.take(200)
+                    )
+                }
                 // Step 3: submit SHA256(password + token).
                 val hashed = sha256Hex(settings.password + token)
                 val (code, loginBody) = postForm(
@@ -781,10 +788,10 @@ class RouterClient {
         return try {
             val host = base(settings)
             if (settings.password.isBlank()) return RouterResult.Failure("اكتب باسورد الأدمن في الإعدادات الأول")
+            // Same verified ZTE order as login(): obtain the pre-auth session
+            // before asking the router for its challenge token.
+            // Browser-style page load first (kept, same reason as login()).
             rootPageHtml = try { get("$host/").second } catch (_: Exception) { "" }
-            val (_, tokenBody) = get("$host/?_type=loginData&_tag=login_token&_=${nextGuid()}")
-            val token = tokenBody.replace(Regex("<[^>]+>"), "").trim()
-            if (token.isBlank()) return RouterResult.Failure("الروتر مردّش على طلب الدخول")
             val (_, entryBody) = get("$host/?_type=loginData&_tag=login_entry")
             val entry = org.json.JSONObject(entryBody)
             if (entry.optInt("lockingTime", 0) != 0) {
@@ -793,6 +800,9 @@ class RouterClient {
             val sess = entry.optString("sess_token", "")
             if (sess.isBlank()) return RouterResult.Failure("الروتر مردّش بجلسة دخول")
             sessToken = sess
+            val (_, tokenBody) = get("$host/?_type=loginData&_tag=login_token&_=${nextGuid()}")
+            val token = tokenBody.replace(Regex("<[^>]+>"), "").trim()
+            if (token.isBlank()) return RouterResult.Failure("الروتر مردّش على رمز الدخول", tokenBody.take(200))
             val hashed = sha256Hex(settings.password + token)
             val (code, loginBody) = postForm(
                 "$host/?_type=loginData&_tag=login_entry",
@@ -809,9 +819,10 @@ class RouterClient {
                 return RouterResult.Failure("الدخول فشل: $errMsg")
             }
             val newSess = loginJson.optString("sess_token", "")
-            if (newSess.isNotBlank()) sessToken = newSess else {
+            if (newSess.isNotBlank()) sessToken = newSess
+            else if (loginJson.optInt("login_need_refresh", 0) == 0) {
                 loggedIn = false
-                return RouterResult.Failure("الدخول فشل — اتأكد من اسم المستخدم والباسورد")
+                return RouterResult.Failure("الدخول فشل — اتأكد من اسم المستخدم والباسورد", loginBody.take(200))
             }
             loggedIn = true
             RouterResult.Success("تم تسجيل الدخول للروتر")
