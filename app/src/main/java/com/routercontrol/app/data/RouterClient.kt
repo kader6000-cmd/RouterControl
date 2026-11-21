@@ -317,13 +317,59 @@ class RouterClient {
     }
 
     /**
-     * Data-script URL in the exact shape of the parental read that works:
-     * millis guid (the web UI's cache-buster) + the session token.
-     * The device reads used a small counter guid before (v1.5 fix).
+     * Page token (_sessionTmpToken) embedded in a router view's HTML,
+     * with \xNN escapes decoded. The parental toggle uses this token;
+     * device reads may need it instead of (or as well as) the login token.
      */
-    private fun dataUrl(host: String, script: String): String {
-        val token = sessToken?.let { "&_sessionTOKEN=$it" } ?: ""
-        return "$host/?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}$token"
+    fun extractPageToken(html: String): String? {
+        val m = Regex("_sessionTmpToken\\s*=\\s*[\"']([^\"']+)[\"']").find(html) ?: return null
+        val raw = m.groupValues[1]
+        val sb = StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            if (raw[i] == '\\' && i + 3 < raw.length && raw[i + 1] == 'x') {
+                val hex = raw.substring(i + 2, i + 4)
+                val code = hex.toIntOrNull(16)
+                if (code != null) {
+                    sb.append(code.toChar())
+                    i += 4
+                    continue
+                }
+            }
+            sb.append(raw[i])
+            i++
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Try one device data script in every request shape that could matter,
+     * in order, and return the first body that is NOT a SessionTimeout
+     * (or the last body tried). Shapes: (a) GET, millis guid, no token —
+     * exactly the parental read that works; (b) GET + page token from the
+     * view HTML; (c) GET + login token; (d) POST + page/login token.
+     * Earlier versions tried only one shape per release (v1.7 sweep).
+     */
+    private fun fetchDeviceScript(host: String, script: String, pageToken: String?): String {
+        val guid = System.currentTimeMillis()
+        val base = "$host/?_type=menuData&_tag=$script&_=$guid"
+        val variants = mutableListOf<Pair<String, Map<String, String>?>>()
+        variants.add(base to null)
+        pageToken?.let { variants.add("$base&_sessionTOKEN=$it" to null) }
+        sessToken?.let { variants.add("$base&_sessionTOKEN=$it" to null) }
+        val postToken = pageToken ?: sessToken
+        postToken?.let { variants.add(base to mapOf("_sessionTOKEN" to it)) }
+        var last = ""
+        for ((url, form) in variants) {
+            val (_, body) = try {
+                if (form == null) get(url) else postForm(url, form)
+            } catch (e: Exception) {
+                0 to ""
+            }
+            last = body
+            if (!body.contains("SessionTimeout") && body.isNotBlank()) return body
+        }
+        return last
     }
 
     /**
@@ -369,6 +415,8 @@ class RouterClient {
                     var deviceUrls: List<String> = emptyList()
                     var lastWlanBody = ""
                     var viewStatus = ""
+                    var deviceViewBody = ""
+                    var pcViewBody = ""
                     val viewCandidates = listOf("localNetStatus", "status", "home", "wlanStatus", "lanStatus")
                     for (viewTag in viewCandidates) {
                         try {
@@ -377,6 +425,7 @@ class RouterClient {
                                 viewStatus = "$viewTag: SessionTimeout"
                                 continue
                             }
+                            deviceViewBody = viewBody
                             viewTags = extractLuaTags(viewBody)
                             deviceUrls = extractLuaUrls(viewBody)
                             viewStatus = "$viewTag: HTTP $viewCode — HTML، لقينا ${viewTags.size} عنوان"
@@ -387,33 +436,27 @@ class RouterClient {
                     }
                     try {
                         val (_, pcBody) = get("$host/?_type=menuView&_tag=parentCtrl&Menu3Location=0&_=${System.currentTimeMillis()}")
+                        pcViewBody = pcBody
                         viewTags = (viewTags + extractLuaTags(pcBody)).distinct()
                         deviceUrls = (deviceUrls + extractLuaUrls(pcBody)).distinct()
                     } catch (e: Exception) {
                         // Non-fatal.
                     }
+                    // Page token from the device view (or the parental view):
+                    // device reads may need it instead of the login token (v1.7).
+                    val pageToken = extractPageToken(deviceViewBody) ?: extractPageToken(pcViewBody)
+                    viewStatus += " — توكن الصفحة: " + if (pageToken.isNullOrBlank()) "مش موجود" else "موجود"
                     val found = linkedMapOf<String, RouterDevice>()
                     var anyTimeout = false
                     // WLAN — H288A family script first, then any script the view named.
-                    // v1.5: same request shape as the parental read that works —
-                    // millis guid + _sessionTOKEN — and a POST retry if the router
-                    // still answers SessionTimeout to the GET.
+                    // v1.7: sweep every request shape per script (no token / page
+                    // token / login token / POST) instead of one shape per release.
                     val wlanCandidates = (listOf("accessdev_ssiddev_lua.lua") + viewTags).distinct()
                     for (script in wlanCandidates) {
-                        val (_, body) = get(dataUrl(host, script))
+                        val body = fetchDeviceScript(host, script, pageToken)
                         lastWlanBody = body
                         if (body.contains("SessionTimeout")) {
                             anyTimeout = true
-                            val (_, postBody) = try {
-                                postForm(dataUrl(host, script), mapOf("_sessionTOKEN" to (sessToken ?: "")))
-                            } catch (e: Exception) { 0 to "" }
-                            lastWlanBody = postBody
-                            if (postBody.contains("SessionTimeout")) anyTimeout = true
-                            val postParsed = parseAccessDevices(postBody, "OBJ_ACCESSDEV_ID", "WLAN")
-                            if (postParsed.isNotEmpty()) {
-                                for (d in postParsed) found.putIfAbsent(d.mac, d)
-                                break
-                            }
                             continue
                         }
                         val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "WLAN")
@@ -425,17 +468,9 @@ class RouterClient {
                     // LAN — same element id on the H288A family.
                     val lanCandidates = (listOf("accessdev_landevs_lua.lua") + viewTags).distinct()
                     for (script in lanCandidates) {
-                        val (_, body) = get(dataUrl(host, script))
+                        val body = fetchDeviceScript(host, script, pageToken)
                         if (body.contains("SessionTimeout")) {
                             anyTimeout = true
-                            val (_, postBody) = try {
-                                postForm(dataUrl(host, script), mapOf("_sessionTOKEN" to (sessToken ?: "")))
-                            } catch (e: Exception) { 0 to "" }
-                            val postParsed = parseAccessDevices(postBody, "OBJ_ACCESSDEV_ID", "LAN")
-                            if (postParsed.isNotEmpty()) {
-                                for (d in postParsed) found.putIfAbsent(d.mac, d)
-                                break
-                            }
                             continue
                         }
                         val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "LAN")
@@ -446,22 +481,11 @@ class RouterClient {
                     }
                     // Fallback: F6640-family WLAN script, only if nothing came back.
                     if (found.isEmpty()) {
-                        val (_, fbBody) = get(dataUrl(host, "wlan_client_stat_lua.lua"))
+                        val fbBody = fetchDeviceScript(host, "wlan_client_stat_lua.lua", pageToken)
                         lastWlanBody = fbBody
-                        if (fbBody.contains("SessionTimeout")) {
-                            anyTimeout = true
-                            val (_, postBody) = try {
-                                postForm(dataUrl(host, "wlan_client_stat_lua.lua"), mapOf("_sessionTOKEN" to (sessToken ?: "")))
-                            } catch (e: Exception) { 0 to "" }
-                            lastWlanBody = postBody
-                            if (postBody.contains("SessionTimeout")) anyTimeout = true
-                            for (d in parseAccessDevices(postBody, "OBJ_WLAN_AD_ID", "WLAN")) {
-                                found.putIfAbsent(d.mac, d)
-                            }
-                        } else {
-                            for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
-                                found.putIfAbsent(d.mac, d)
-                            }
+                        if (fbBody.contains("SessionTimeout")) anyTimeout = true
+                        for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
+                            found.putIfAbsent(d.mac, d)
                         }
                     }
                     if (found.isNotEmpty()) {
