@@ -332,12 +332,22 @@ class RouterClient {
                     // Context setup for the local-network view (zte_tracker: menuView localNetStatus).
                     // The view HTML itself names the data scripts this firmware
                     // uses — read them out instead of only guessing names (v1.2).
+                    // The parental page also initializes a device query
+                    // (initial_QueryAccessDeviceLink), so its HTML may name the
+                    // device script too — read both pages (v1.4).
                     var viewTags: List<String> = emptyList()
+                    var lastWlanBody = ""
                     try {
                         val (_, viewBody) = get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
                         viewTags = extractLuaTags(viewBody)
                     } catch (e: Exception) {
                         // Non-fatal; the data requests below decide success.
+                    }
+                    try {
+                        val (_, pcBody) = get("$host/?_type=menuView&_tag=parentCtrl&Menu3Location=0&_=${nextGuid()}")
+                        viewTags = (viewTags + extractLuaTags(pcBody)).distinct()
+                    } catch (e: Exception) {
+                        // Non-fatal.
                     }
                     val found = linkedMapOf<String, RouterDevice>()
                     var anyTimeout = false
@@ -345,6 +355,7 @@ class RouterClient {
                     val wlanCandidates = (listOf("accessdev_ssiddev_lua.lua") + viewTags).distinct()
                     for (script in wlanCandidates) {
                         val (_, body) = get("$host/?_type=menuData&_tag=$script&_=${nextGuid()}")
+                        lastWlanBody = body
                         if (body.contains("SessionTimeout")) anyTimeout = true
                         val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "WLAN")
                         if (parsed.isNotEmpty()) {
@@ -366,13 +377,19 @@ class RouterClient {
                     // Fallback: F6640-family WLAN script, only if nothing came back.
                     if (found.isEmpty()) {
                         val (_, fbBody) = get("$host/?_type=menuData&_tag=wlan_client_stat_lua.lua&_=${nextGuid()}")
+                        lastWlanBody = fbBody
                         if (fbBody.contains("SessionTimeout")) anyTimeout = true
                         for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
                             found.putIfAbsent(d.mac, d)
                         }
                     }
                     if (found.isNotEmpty()) {
-                        result = DeviceFetch(found.values.sortedBy { it.name.lowercase(Locale.US) }, null)
+                        result = DeviceFetch(
+                            found.values.sortedBy { it.name.lowercase(Locale.US) },
+                            null,
+                            viewTags,
+                            lastWlanBody.take(300)
+                        )
                         break
                     }
                     // Empty result: was the session evicted? An evicted session
@@ -391,13 +408,17 @@ class RouterClient {
                     if (timedOut) {
                         result = DeviceFetch(
                             emptyList(),
-                            "الروتر رفض الجلسة (SessionTimeout) — لو صفحة الروتر مفتوحة في المتصفح، اقفلها وحاول تاني من التطبيق"
+                            "الروتر رفض الجلسة (SessionTimeout) — لو صفحة الروتر مفتوحة في المتصفح، اقفلها وحاول تاني من التطبيق",
+                            viewTags,
+                            lastWlanBody.take(300)
                         )
                         break
                     }
                     result = DeviceFetch(
                         emptyList(),
-                        "الروتر رد بس من غير أجهزة — ممكن مفيش جهاز متصل دلوقتي، أو سوفت الروتر رد بشكل مختلف عن المتوقع (شوف صفحة التشخيص)"
+                        "الروتر رد بس من غير أجهزة — ممكن مفيش جهاز متصل دلوقتي، أو سوفت الروتر رد بشكل مختلف عن المتوقع (شوف صفحة التشخيص)",
+                        viewTags,
+                        lastWlanBody.take(300)
                     )
                 }
                 result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
