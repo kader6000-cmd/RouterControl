@@ -229,6 +229,14 @@ object ParentalSync {
                 !devices.debugViewStatus.contains("SessionTimeout")
             )
         )
+        entries.add(
+            DiagnosticsEntry(
+                "روابط الأجهزة من صفحة الروتر",
+                if (devices.debugDeviceUrls.isEmpty()) "مفيش روابط سكربتات ظاهرة في صفحة الأجهزة"
+                else devices.debugDeviceUrls.joinToString("، "),
+                devices.debugDeviceUrls.isNotEmpty()
+            )
+        )
         // 1. Open the parental view; the HTML embeds _sessionTmpToken.
         val (viewCode, viewHtml) = client.rawGet(
             settings,
