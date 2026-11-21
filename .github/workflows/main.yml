@@ -1,0 +1,60 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Restore signing keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/release.keystore
+
+      - name: Verify keystore
+        run: |
+          SIZE=$(stat -c %s "$GITHUB_WORKSPACE/release.keystore")
+          echo "keystore size: $SIZE bytes (expected 2708)"
+          if [ "$SIZE" != "2708" ]; then echo "ERROR: keystore size mismatch — the secret is incomplete, repaste it"; exit 1; fi
+          keytool -list -v -keystore "$GITHUB_WORKSPACE/release.keystore" -storepass "$KEYSTORE_PASSWORD" > /tmp/ks.txt
+          grep -q "Alias name: nova" /tmp/ks.txt || { echo "ERROR: alias is not nova"; exit 1; }
+          grep -q "26:85:F7:C2:B9:B4:F2:43:D0:D9:4D:CD:60:9E:3B:DF:F6:E7:36:F1:A5:83:EB:45:C0:85:F2:04:CD:CE:C0:AF" /tmp/ks.txt || { echo "ERROR: certificate fingerprint mismatch"; exit 1; }
+          echo "keystore OK: 2708 bytes, alias nova, fingerprint matches"
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+
+      - name: Build Release APK
+        run: gradle assembleRelease
+
+      - name: Sign APK
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" /usr/local/lib/android/sdk -maxdepth 4 -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then echo "apksigner not found"; exit 1; fi
+          echo "Using $APKSIGNER"
+          "$APKSIGNER" sign --ks "$GITHUB_WORKSPACE/release.keystore" --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD --out "app/build/outputs/apk/release/app-release.apk" "app/build/outputs/apk/release/app-release-unsigned.apk"
+          "$APKSIGNER" verify --verbose --print-certs "app/build/outputs/apk/release/app-release.apk"
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RouterControl-APK
+          path: "app/build/outputs/apk/release/app-release.apk"
