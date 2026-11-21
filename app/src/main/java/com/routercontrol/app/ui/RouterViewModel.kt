@@ -191,7 +191,8 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
                 ScheduleWorker.enqueueTimer(getApplication(), rule.name, minutes)
                 _state.update { it.copy(rules = final, message = "تم فتح ${rule.name} لمدة $minutes دقيقة — هيتقفل لوحده بعدها") }
             } else {
-                _state.update { it.copy(rules = final, message = res.message) }
+                val msg = if (res is RouterResult.Failure) res.message else "فشل فتح ${rule.name}"
+                _state.update { it.copy(rules = final, message = msg) }
             }
         }
     }
