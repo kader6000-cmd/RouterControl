@@ -388,6 +388,18 @@ class RouterClient {
         return found.toList()
     }
 
+    /** Return the source surrounding the router UI's device-query initializer. */
+    fun extractDeviceInitializer(html: String): String {
+        val marker = "initial_QueryAccessDeviceLink"
+        val at = html.indexOf(marker)
+        if (at < 0) return ""
+        val scriptStart = html.lastIndexOf("<script", at, ignoreCase = true)
+        val start = if (scriptStart >= 0) scriptStart else (at - 1200).coerceAtLeast(0)
+        val scriptEnd = html.indexOf("</script>", at, ignoreCase = true)
+        val end = if (scriptEnd >= 0) minOf(scriptEnd + 9, start + 9000) else minOf(html.length, at + 7000)
+        return html.substring(start, end).replace(Regex("\\s+"), " ").take(7000)
+    }
+
     /**
      * Try a URL fragment copied from the router page itself. Some ZTE pages
      * build data requests with extra query parameters (SSID, InstanceID, etc.);
@@ -451,6 +463,7 @@ class RouterClient {
                     var viewStatus = ""
                     var deviceViewBody = ""
                     var pcViewBody = ""
+                    var deviceInitializer = ""
                     val viewCandidates = listOf("localNetStatus", "status", "home", "wlanStatus", "lanStatus")
                     for (viewTag in viewCandidates) {
                         try {
@@ -462,6 +475,7 @@ class RouterClient {
                             deviceViewBody = viewBody
                             viewTags = extractLuaTags(viewBody)
                             deviceUrls = extractLuaUrls(viewBody)
+                            deviceInitializer = extractDeviceInitializer(viewBody)
                             viewStatus = "$viewTag: HTTP $viewCode — HTML، لقينا ${viewTags.size} عنوان"
                             break
                         } catch (e: Exception) {
@@ -473,6 +487,7 @@ class RouterClient {
                         pcViewBody = pcBody
                         viewTags = (viewTags + extractLuaTags(pcBody)).distinct()
                         deviceUrls = (deviceUrls + extractLuaUrls(pcBody)).distinct()
+                        if (deviceInitializer.isBlank()) deviceInitializer = extractDeviceInitializer(pcBody)
                     } catch (e: Exception) {
                         // Non-fatal.
                     }
@@ -540,7 +555,8 @@ class RouterClient {
                             viewTags,
                             lastWlanBody.take(300),
                             viewStatus,
-                            deviceUrls
+                            deviceUrls,
+                            deviceInitializer
                         )
                         break
                     }
@@ -564,7 +580,8 @@ class RouterClient {
                             viewTags,
                             lastWlanBody.take(300),
                             viewStatus,
-                            deviceUrls
+                            deviceUrls,
+                            deviceInitializer
                         )
                         break
                     }
@@ -574,7 +591,8 @@ class RouterClient {
                         viewTags,
                         lastWlanBody.take(300),
                         viewStatus,
-                        deviceUrls
+                        deviceUrls,
+                        deviceInitializer
                     )
                 }
                 result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
