@@ -222,6 +222,13 @@ object ParentalSync {
                 devices.error == null
             )
         )
+        entries.add(
+            DiagnosticsEntry(
+                "صفحة الأجهزة (localNetStatus)",
+                if (devices.debugViewStatus.isBlank()) "(مفيش رد)" else devices.debugViewStatus,
+                !devices.debugViewStatus.contains("SessionTimeout")
+            )
+        )
         // 1. Open the parental view; the HTML embeds _sessionTmpToken.
         val (viewCode, viewHtml) = client.rawGet(
             settings,
