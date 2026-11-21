@@ -326,6 +326,22 @@ class RouterClient {
         return "$host/?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}$token"
     }
 
+    /**
+     * Pull full URL fragments mentioning a data script out of a router page's
+     * HTML/JS — including any extra query params the UI sends with them
+     * (e.g. ?_type=menuData&_tag=accessdev_ssiddev_lua.lua&SSID=1).
+     * The tag name alone may not be the whole request (v1.6).
+     */
+    fun extractLuaUrls(html: String): List<String> {
+        val found = linkedSetOf<String>()
+        val re = Regex("[\"']([^\"'\\s]*_lua\\.lua[^\"'\\s]*)[\"']")
+        for (m in re.findAll(html)) {
+            val v = m.groupValues[1].trim()
+            if (v.isNotBlank()) found.add(v)
+        }
+        return found.toList()
+    }
+
     /** Live WLAN + LAN devices. Requires a logged-in session (logs in first if needed). */
     suspend fun getDevices(settings: RouterSettings): DeviceFetch = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -345,21 +361,34 @@ class RouterClient {
                     // The parental page also initializes a device query
                     // (initial_QueryAccessDeviceLink), so its HTML may name the
                     // device script too — read both pages (v1.4).
+                    // v1.6: localNetStatus may not exist on GR5.1T16 — if it
+                    // answers SessionTimeout, try other view tags until one
+                    // returns real HTML; the view must load before its data
+                    // scripts answer (same pattern as the parental page).
                     var viewTags: List<String> = emptyList()
+                    var deviceUrls: List<String> = emptyList()
                     var lastWlanBody = ""
                     var viewStatus = ""
-                    try {
-                        val (viewCode, viewBody) = get("$host/?_type=menuView&_tag=localNetStatus&_=${System.currentTimeMillis()}")
-                        viewTags = extractLuaTags(viewBody)
-                        viewStatus = "HTTP $viewCode — " +
-                            if (viewBody.contains("SessionTimeout")) "SessionTimeout (عنوان الصفحة مش موجود في السوفت)"
-                            else "HTML، لقينا ${viewTags.size} عنوان"
-                    } catch (e: Exception) {
-                        viewStatus = "مفيش رد: ${e.message ?: "خطأ غير معروف"}"
+                    val viewCandidates = listOf("localNetStatus", "status", "home", "wlanStatus", "lanStatus")
+                    for (viewTag in viewCandidates) {
+                        try {
+                            val (viewCode, viewBody) = get("$host/?_type=menuView&_tag=$viewTag&_=${System.currentTimeMillis()}")
+                            if (viewBody.contains("SessionTimeout")) {
+                                viewStatus = "$viewTag: SessionTimeout"
+                                continue
+                            }
+                            viewTags = extractLuaTags(viewBody)
+                            deviceUrls = extractLuaUrls(viewBody)
+                            viewStatus = "$viewTag: HTTP $viewCode — HTML، لقينا ${viewTags.size} عنوان"
+                            break
+                        } catch (e: Exception) {
+                            viewStatus = "$viewTag: مفيش رد (${e.message ?: "خطأ غير معروف"})"
+                        }
                     }
                     try {
                         val (_, pcBody) = get("$host/?_type=menuView&_tag=parentCtrl&Menu3Location=0&_=${System.currentTimeMillis()}")
                         viewTags = (viewTags + extractLuaTags(pcBody)).distinct()
+                        deviceUrls = (deviceUrls + extractLuaUrls(pcBody)).distinct()
                     } catch (e: Exception) {
                         // Non-fatal.
                     }
@@ -441,7 +470,8 @@ class RouterClient {
                             null,
                             viewTags,
                             lastWlanBody.take(300),
-                            viewStatus
+                            viewStatus,
+                            deviceUrls
                         )
                         break
                     }
@@ -464,7 +494,8 @@ class RouterClient {
                             "الروتر رفض الجلسة (SessionTimeout) — لو صفحة الروتر مفتوحة في المتصفح، اقفلها وحاول تاني من التطبيق",
                             viewTags,
                             lastWlanBody.take(300),
-                            viewStatus
+                            viewStatus,
+                            deviceUrls
                         )
                         break
                     }
@@ -473,7 +504,8 @@ class RouterClient {
                         "الروتر رد بس من غير أجهزة — ممكن مفيش جهاز متصل دلوقتي، أو سوفت الروتر رد بشكل مختلف عن المتوقع (شوف صفحة التشخيص)",
                         viewTags,
                         lastWlanBody.take(300),
-                        viewStatus
+                        viewStatus,
+                        deviceUrls
                     )
                 }
                 result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
