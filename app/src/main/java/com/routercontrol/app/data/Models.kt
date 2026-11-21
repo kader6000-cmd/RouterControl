@@ -58,7 +58,11 @@ data class DiagnosticsEntry(
 
 data class DeviceFetch(
     val devices: List<RouterDevice>,
-    val error: String? = null
+    val error: String? = null,
+    /** Data-script names found in the router's own device pages (Diagnostics). */
+    val debugTags: List<String> = emptyList(),
+    /** Snippet of the last WLAN data reply (Diagnostics). */
+    val debugSnippet: String = ""
 )
 
 /** Result of a router call. `raw` is a short snippet of the router reply, for Diagnostics. */
