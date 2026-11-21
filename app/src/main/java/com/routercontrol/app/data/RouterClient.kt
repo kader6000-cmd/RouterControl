@@ -149,10 +149,7 @@ class RouterClient {
                     return@withContext RouterResult.Failure("عنوان الروتر مش صحيح — مثال: 192.168.1.1")
                 }
                 refererBase = host
-                // Match the verified ZTE login sequence: login_entry FIRST creates
-                // the pre-auth session token/cookie; only then request login_token.
-                // Reversing these two calls can leave a valid-looking HTTP session
-                // that answers SessionTimeout to every menuData endpoint.
+                // H288A reference sequence: login_entry, login_token, login_entry POST.
                 // Browser-style page load first (kept): sets the router's cookies
                 // (_TESTCOOKIESUPPORT / SID) the way a real page load does, and
                 // captures the shell HTML for the device-JS scan. zte_tracker notes
@@ -535,16 +532,25 @@ class RouterClient {
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
+    private fun anonymousRequestBuilder(url: String, host: String): Request.Builder = Request.Builder().url(url)
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("Accept", "application/json, text/javascript, */*; q=0.01")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+        .header("Referer", "$host/")
+        // H288A's device tracker uses this same SID for the full login handshake
+        // and subsequent menuData calls. Keep it isolated from admin controls.
+        .header("Cookie", "SID_HTTPS_=ANON_COOKIE")
+
     private fun anonymousGet(url: String, host: String): Pair<Int, String> {
-        val builder = Request.Builder().url(url)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Accept", "application/json, text/javascript, */*; q=0.01")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-            .header("Referer", "$host/")
-            // H288A firmware accepts the public device-data session only when the
-            // anonymous SID is sent explicitly; it does not always Set-Cookie it.
-            .header("Cookie", "SID_HTTPS_=ANON_COOKIE")
-        anonymousHttp.newCall(builder.get().build()).execute().use { response ->
+        anonymousHttp.newCall(anonymousRequestBuilder(url, host).get().build()).execute().use { response ->
+            return response.code to (response.body?.string() ?: "")
+        }
+    }
+
+    private fun anonymousPost(url: String, host: String, params: Map<String, String>): Pair<Int, String> {
+        val form = FormBody.Builder()
+        for ((key, value) in params) form.add(key, value)
+        anonymousHttp.newCall(anonymousRequestBuilder(url, host).post(form.build()).build()).execute().use { response ->
             return response.code to (response.body?.string() ?: "")
         }
     }
@@ -552,15 +558,44 @@ class RouterClient {
     /** Last anonymous-session probe, retained even when it fails so Diagnostics can show it. */
     private var anonymousProbeDiagnostics: String = ""
 
-    private fun fetchAnonymousDevices(host: String): DeviceFetch? {
+    private fun fetchAnonymousDevices(host: String, settings: RouterSettings): DeviceFetch? {
         val probe = mutableListOf<String>()
         fun record(label: String, result: Pair<Int, String>) {
             probe.add("$label: HTTP ${result.first} — ${result.second.take(420).replace("\n", " ")}")
-            anonymousProbeDiagnostics = probe.joinToString("\n").take(2400)
+            anonymousProbeDiagnostics = probe.joinToString("\n").take(3000)
         }
         return try {
-            // Establish the anonymous router session before querying menu data.
-            record("ANON root", anonymousGet("$host/", host))
+            // Reproduce the H288A sequence from zte_tracker: all three login
+            // requests and the later device queries share SID_HTTPS_=ANON_COOKIE.
+            val (_, entryBody) = anonymousGet("$host/?_type=loginData&_tag=login_entry", host)
+                .also { record("ANON login_entry (GET)", it) }
+            val entry = org.json.JSONObject(entryBody)
+            val preAuthToken = entry.optString("sess_token", "")
+            if (preAuthToken.isBlank()) {
+                record("ANON handshake", 0 to "login_entry did not return sess_token")
+                return null
+            }
+            val (_, challengeBody) = anonymousGet(
+                "$host/?_type=loginData&_tag=login_token&_=${nextGuid()}", host
+            ).also { record("ANON login_token", it) }
+            val challenge = challengeBody.replace(Regex("<[^>]+>"), "").trim()
+            if (challenge.isBlank()) {
+                record("ANON handshake", 0 to "login_token was empty")
+                return null
+            }
+            val hashedPassword = sha256Hex(settings.password + challenge)
+            val (loginCode, loginBody) = anonymousPost(
+                "$host/?_type=loginData&_tag=login_entry", host,
+                mapOf("action" to "login", "Username" to settings.username,
+                    "Password" to hashedPassword, "_sessionTOKEN" to preAuthToken)
+            ).also { record("ANON login_entry (POST)", it) }
+            // Some ZTE models answer login_need_refresh=1 here. This is the
+            // expected public-tracker handshake; do not treat it as admin login.
+            val loginJson = try { org.json.JSONObject(loginBody) } catch (_: Exception) { org.json.JSONObject() }
+            if (loginCode != 200 || loginJson.optString("loginErrMsg", "").isNotBlank()) {
+                record("ANON handshake", loginCode to "login rejected: ${loginJson.optString("loginErrMsg", loginBody.take(180))}")
+                return null
+            }
             val (viewCode, viewBody) = anonymousGet(
                 "$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}", host
             ).also { record("ANON localNetStatus", it) }
@@ -608,7 +643,7 @@ class RouterClient {
             try {
                 val host = base(settings)
                 anonymousProbeDiagnostics = ""
-                fetchAnonymousDevices(host)?.let { return@withContext it }
+                fetchAnonymousDevices(host, settings)?.let { return@withContext it }
                 if (!loggedIn) {
                     val login = loginUnLocked(settings)
                     if (login is RouterResult.Failure) return@withContext DeviceFetch(emptyList(), login.message)
@@ -788,8 +823,7 @@ class RouterClient {
         return try {
             val host = base(settings)
             if (settings.password.isBlank()) return RouterResult.Failure("اكتب باسورد الأدمن في الإعدادات الأول")
-            // Same verified ZTE order as login(): obtain the pre-auth session
-            // before asking the router for its challenge token.
+            // Same H288A reference order as login(): entry, challenge, entry POST.
             // Browser-style page load first (kept, same reason as login()).
             rootPageHtml = try { get("$host/").second } catch (_: Exception) { "" }
             val (_, entryBody) = get("$host/?_type=loginData&_tag=login_entry")
