@@ -502,15 +502,87 @@ class RouterClient {
         return last
     }
 
-    /** Live WLAN + LAN devices. Requires a logged-in session (logs in first if needed). */
+    /**
+     * H288A device-list endpoints are also exposed through the router's anonymous
+     * SID_HTTPS_=ANON_COOKIE session (as used by zte_tracker). Keep this cookie jar
+     * separate from the authenticated parental-control session: logging in replaces
+     * the anonymous SID on some firmware and can make device reads return SessionTimeout.
+     */
+    private val anonymousCookies = mutableListOf<Cookie>()
+    private val anonymousCookieJar = object : CookieJar {
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<Cookie>) {
+            synchronized(anonymousCookies) {
+                for (cookie in cookies) {
+                    anonymousCookies.removeAll { it.name == cookie.name }
+                    anonymousCookies.add(cookie)
+                }
+            }
+        }
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<Cookie> =
+            synchronized(anonymousCookies) { anonymousCookies.toList() }
+    }
+    private val anonymousHttp = OkHttpClient.Builder()
+        .cookieJar(anonymousCookieJar)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .build()
+
+    private fun anonymousGet(url: String, host: String): Pair<Int, String> {
+        val builder = Request.Builder().url(url)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+            .header("Referer", "$host/")
+        anonymousHttp.newCall(builder.get().build()).execute().use { response ->
+            return response.code to (response.body?.string() ?: "")
+        }
+    }
+
+    private fun fetchAnonymousDevices(host: String): DeviceFetch? {
+        return try {
+            // Establish the anonymous router session before querying menu data.
+            anonymousGet("$host/", host)
+            val (viewCode, viewBody) = anonymousGet(
+                "$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}", host
+            )
+            val tags = extractLuaTags(viewBody)
+            val urls = extractLuaUrls(viewBody)
+            val found = linkedMapOf<String, RouterDevice>()
+            val snippets = mutableListOf<String>()
+            for (script in listOf("accessdev_landevs_lua.lua", "accessdev_ssiddev_lua.lua")) {
+                val (_, body) = anonymousGet(
+                    "$host/?_type=menuData&_tag=$script&_=${nextGuid()}", host
+                )
+                snippets.add("$script: ${body.take(500)}")
+                if (body.contains("SessionTimeout")) continue
+                val type = if (script.contains("lande")) "LAN" else "WLAN"
+                val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", type)
+                for (device in parsed) found.putIfAbsent(device.mac, device)
+            }
+            if (found.isEmpty()) null else DeviceFetch(
+                devices = found.values.sortedBy { it.name.lowercase(Locale.US) },
+                debugTags = tags,
+                debugSnippet = snippets.joinToString("\n").take(1200),
+                debugViewStatus = "anonymous localNetStatus: HTTP $viewCode — HTML",
+                debugDeviceUrls = urls,
+                debugDeviceInitializer = "تم جلب الأجهزة عبر جلسة الراوتر المجهولة (ANON_COOKIE) بدون تسجيل دخول جديد."
+            )
+        } catch (_: Exception) {
+            null // Fall back to the authenticated flow and preserve its diagnostics.
+        }
+    }
+
+    /** Live WLAN + LAN devices. Try the router's anonymous tracker session first, then authenticated fallback. */
     suspend fun getDevices(settings: RouterSettings): DeviceFetch = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
+                val host = base(settings)
+                fetchAnonymousDevices(host)?.let { return@withContext it }
                 if (!loggedIn) {
                     val login = loginUnLocked(settings)
                     if (login is RouterResult.Failure) return@withContext DeviceFetch(emptyList(), login.message)
                 }
-                val host = base(settings)
                 refererBase = host
                 var attempt = 0
                 var result: DeviceFetch? = null
