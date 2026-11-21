@@ -64,6 +64,8 @@ class RouterClient {
     private var loggedIn = false
     /** Base URL of the router, for the Referer header the web UI always sends. */
     private var refererBase: String? = null
+    /** Main router shell HTML; common JS bundles are often referenced here, not in menuView fragments. */
+    private var rootPageHtml: String = ""
 
     private fun nextGuid(): Long {
         guid += 1
@@ -148,7 +150,7 @@ class RouterClient {
                 // zte_tracker notes that without this, some endpoints answer
                 // SessionTimeout. Best effort — login decides success.
                 try {
-                    get("$host/")
+                    rootPageHtml = get("$host/").second
                 } catch (e: Exception) {
                     // Ignore; the login steps below will fail loudly if unreachable.
                 }
@@ -443,19 +445,23 @@ class RouterClient {
     private fun fetchExternalDeviceInitializer(host: String, pageHtml: String): String {
         val expected = host.toHttpUrlOrNull() ?: return ""
         val results = mutableListOf<String>()
-        for (src in extractScriptSources(pageHtml)) {
+        val sources = extractScriptSources(pageHtml).distinct()
+        if (sources.isEmpty()) return "لم يتم العثور على وسوم script src في HTML الخاص بالصفحات/الإطار الرئيسي."
+        for (src in sources) {
             val url = expected.resolve(src) ?: continue
             if (url.host != expected.host) continue // never send router cookies off-device
-            val body = try { get(url.toString()).second } catch (_: Exception) { "" }
+            val (code, body) = try { get(url.toString()) } catch (e: Exception) { 0 to "ERROR: ${e.message}" }
             val definition = functionBody(body, "initial_QueryAccessDeviceLink")
             if (definition.isNotBlank()) {
-                results.add("SOURCE: ${url.encodedPath}\n$definition")
+                results.add("SOURCE: ${url.encodedPath} — HTTP $code, ${body.length} chars\n$definition")
             } else {
                 val marker = body.indexOf("initial_QueryAccessDeviceLink")
                 if (marker >= 0) {
                     val from = (marker - 2500).coerceAtLeast(0)
                     val to = (marker + 9000).coerceAtMost(body.length)
-                    results.add("SOURCE (context): ${url.encodedPath}\n${body.substring(from, to)}")
+                    results.add("SOURCE (context): ${url.encodedPath} — HTTP $code, ${body.length} chars\n${body.substring(from, to)}")
+                } else {
+                    results.add("JS checked: ${url.encodedPath} — HTTP $code, ${body.length} chars, no function marker")
                 }
             }
         }
@@ -556,8 +562,7 @@ class RouterClient {
                     // The inline HTML contains only the call. Fetch referenced same-origin JS
                     // and append the actual function definition for the diagnostic report.
                     if (deviceInitializer.isNotBlank() && !deviceInitializer.contains("function initial_QueryAccessDeviceLink")) {
-                        val externalDefinition = fetchExternalDeviceInitializer(host, deviceViewBody) + "\n" +
-                            fetchExternalDeviceInitializer(host, pcViewBody)
+                        val externalDefinition = fetchExternalDeviceInitializer(host, rootPageHtml + deviceViewBody + pcViewBody)
                         if (externalDefinition.isNotBlank()) deviceInitializer += "\n\n--- تعريف الدالة من ملفات JavaScript الخارجية ---\n" + externalDefinition
                     }
                     // Page token from the device view (or the parental view):
@@ -676,6 +681,7 @@ class RouterClient {
         return try {
             val host = base(settings)
             if (settings.password.isBlank()) return RouterResult.Failure("اكتب باسورد الأدمن في الإعدادات الأول")
+            rootPageHtml = try { get("$host/").second } catch (_: Exception) { "" }
             val (_, tokenBody) = get("$host/?_type=loginData&_tag=login_token&_=${nextGuid()}")
             val token = tokenBody.replace(Regex("<[^>]+>"), "").trim()
             if (token.isBlank()) return RouterResult.Failure("الروتر مردّش على طلب الدخول")
