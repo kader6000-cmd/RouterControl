@@ -316,6 +316,16 @@ class RouterClient {
         return found.toList()
     }
 
+    /**
+     * Data-script URL in the exact shape of the parental read that works:
+     * millis guid (the web UI's cache-buster) + the session token.
+     * The device reads used a small counter guid before (v1.5 fix).
+     */
+    private fun dataUrl(host: String, script: String): String {
+        val token = sessToken?.let { "&_sessionTOKEN=$it" } ?: ""
+        return "$host/?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}$token"
+    }
+
     /** Live WLAN + LAN devices. Requires a logged-in session (logs in first if needed). */
     suspend fun getDevices(settings: RouterSettings): DeviceFetch = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -337,14 +347,18 @@ class RouterClient {
                     // device script too — read both pages (v1.4).
                     var viewTags: List<String> = emptyList()
                     var lastWlanBody = ""
+                    var viewStatus = ""
                     try {
-                        val (_, viewBody) = get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
+                        val (viewCode, viewBody) = get("$host/?_type=menuView&_tag=localNetStatus&_=${System.currentTimeMillis()}")
                         viewTags = extractLuaTags(viewBody)
+                        viewStatus = "HTTP $viewCode — " +
+                            if (viewBody.contains("SessionTimeout")) "SessionTimeout (عنوان الصفحة مش موجود في السوفت)"
+                            else "HTML، لقينا ${viewTags.size} عنوان"
                     } catch (e: Exception) {
-                        // Non-fatal; the data requests below decide success.
+                        viewStatus = "مفيش رد: ${e.message ?: "خطأ غير معروف"}"
                     }
                     try {
-                        val (_, pcBody) = get("$host/?_type=menuView&_tag=parentCtrl&Menu3Location=0&_=${nextGuid()}")
+                        val (_, pcBody) = get("$host/?_type=menuView&_tag=parentCtrl&Menu3Location=0&_=${System.currentTimeMillis()}")
                         viewTags = (viewTags + extractLuaTags(pcBody)).distinct()
                     } catch (e: Exception) {
                         // Non-fatal.
@@ -352,11 +366,27 @@ class RouterClient {
                     val found = linkedMapOf<String, RouterDevice>()
                     var anyTimeout = false
                     // WLAN — H288A family script first, then any script the view named.
+                    // v1.5: same request shape as the parental read that works —
+                    // millis guid + _sessionTOKEN — and a POST retry if the router
+                    // still answers SessionTimeout to the GET.
                     val wlanCandidates = (listOf("accessdev_ssiddev_lua.lua") + viewTags).distinct()
                     for (script in wlanCandidates) {
-                        val (_, body) = get("$host/?_type=menuData&_tag=$script&_=${nextGuid()}")
+                        val (_, body) = get(dataUrl(host, script))
                         lastWlanBody = body
-                        if (body.contains("SessionTimeout")) anyTimeout = true
+                        if (body.contains("SessionTimeout")) {
+                            anyTimeout = true
+                            val (_, postBody) = try {
+                                postForm(dataUrl(host, script), mapOf("_sessionTOKEN" to (sessToken ?: "")))
+                            } catch (e: Exception) { 0 to "" }
+                            lastWlanBody = postBody
+                            if (postBody.contains("SessionTimeout")) anyTimeout = true
+                            val postParsed = parseAccessDevices(postBody, "OBJ_ACCESSDEV_ID", "WLAN")
+                            if (postParsed.isNotEmpty()) {
+                                for (d in postParsed) found.putIfAbsent(d.mac, d)
+                                break
+                            }
+                            continue
+                        }
                         val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "WLAN")
                         if (parsed.isNotEmpty()) {
                             for (d in parsed) found.putIfAbsent(d.mac, d)
@@ -366,8 +396,19 @@ class RouterClient {
                     // LAN — same element id on the H288A family.
                     val lanCandidates = (listOf("accessdev_landevs_lua.lua") + viewTags).distinct()
                     for (script in lanCandidates) {
-                        val (_, body) = get("$host/?_type=menuData&_tag=$script&_=${nextGuid()}")
-                        if (body.contains("SessionTimeout")) anyTimeout = true
+                        val (_, body) = get(dataUrl(host, script))
+                        if (body.contains("SessionTimeout")) {
+                            anyTimeout = true
+                            val (_, postBody) = try {
+                                postForm(dataUrl(host, script), mapOf("_sessionTOKEN" to (sessToken ?: "")))
+                            } catch (e: Exception) { 0 to "" }
+                            val postParsed = parseAccessDevices(postBody, "OBJ_ACCESSDEV_ID", "LAN")
+                            if (postParsed.isNotEmpty()) {
+                                for (d in postParsed) found.putIfAbsent(d.mac, d)
+                                break
+                            }
+                            continue
+                        }
                         val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "LAN")
                         if (parsed.isNotEmpty()) {
                             for (d in parsed) found.putIfAbsent(d.mac, d)
@@ -376,11 +417,22 @@ class RouterClient {
                     }
                     // Fallback: F6640-family WLAN script, only if nothing came back.
                     if (found.isEmpty()) {
-                        val (_, fbBody) = get("$host/?_type=menuData&_tag=wlan_client_stat_lua.lua&_=${nextGuid()}")
+                        val (_, fbBody) = get(dataUrl(host, "wlan_client_stat_lua.lua"))
                         lastWlanBody = fbBody
-                        if (fbBody.contains("SessionTimeout")) anyTimeout = true
-                        for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
-                            found.putIfAbsent(d.mac, d)
+                        if (fbBody.contains("SessionTimeout")) {
+                            anyTimeout = true
+                            val (_, postBody) = try {
+                                postForm(dataUrl(host, "wlan_client_stat_lua.lua"), mapOf("_sessionTOKEN" to (sessToken ?: "")))
+                            } catch (e: Exception) { 0 to "" }
+                            lastWlanBody = postBody
+                            if (postBody.contains("SessionTimeout")) anyTimeout = true
+                            for (d in parseAccessDevices(postBody, "OBJ_WLAN_AD_ID", "WLAN")) {
+                                found.putIfAbsent(d.mac, d)
+                            }
+                        } else {
+                            for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
+                                found.putIfAbsent(d.mac, d)
+                            }
                         }
                     }
                     if (found.isNotEmpty()) {
@@ -388,7 +440,8 @@ class RouterClient {
                             found.values.sortedBy { it.name.lowercase(Locale.US) },
                             null,
                             viewTags,
-                            lastWlanBody.take(300)
+                            lastWlanBody.take(300),
+                            viewStatus
                         )
                         break
                     }
@@ -410,7 +463,8 @@ class RouterClient {
                             emptyList(),
                             "الروتر رفض الجلسة (SessionTimeout) — لو صفحة الروتر مفتوحة في المتصفح، اقفلها وحاول تاني من التطبيق",
                             viewTags,
-                            lastWlanBody.take(300)
+                            lastWlanBody.take(300),
+                            viewStatus
                         )
                         break
                     }
@@ -418,7 +472,8 @@ class RouterClient {
                         emptyList(),
                         "الروتر رد بس من غير أجهزة — ممكن مفيش جهاز متصل دلوقتي، أو سوفت الروتر رد بشكل مختلف عن المتوقع (شوف صفحة التشخيص)",
                         viewTags,
-                        lastWlanBody.take(300)
+                        lastWlanBody.take(300),
+                        viewStatus
                     )
                 }
                 result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
