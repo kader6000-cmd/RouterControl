@@ -400,6 +400,68 @@ class RouterClient {
         return html.substring(start, end).replace(Regex("\\s+"), " ").take(7000)
     }
 
+    /** Fetch same-origin external JS files: the page's inline code only invokes
+     * initial_QueryAccessDeviceLink(); its implementation is often in a .js file. */
+    private fun extractScriptSources(html: String): List<String> {
+        val found = linkedSetOf<String>()
+        val re = Regex("(?is)<script\\b[^>]*?src\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']")
+        for (m in re.findAll(html)) found.add(m.groupValues[1].replace("&amp;", "&"))
+        return found.toList()
+    }
+
+    private fun functionBody(source: String, functionName: String): String {
+        val name = Regex.escape(functionName)
+        val patterns = listOf(
+            Regex("function\\s+$name\\s*\\([^)]*\\)\\s*\\{"),
+            Regex("(?:var\\s+|let\\s+|const\\s+)?$name\\s*=\\s*function\\s*\\([^)]*\\)\\s*\\{"),
+            Regex("$name\\s*:\\s*function\\s*\\([^)]*\\)\\s*\\{")
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(source) ?: continue
+            val open = source.indexOf('{', match.range.first)
+            var depth = 0
+            var quote: Char? = null
+            var escaped = false
+            for (i in open until source.length) {
+                val c = source[i]
+                if (quote != null) {
+                    if (escaped) escaped = false else if (c == '\\') escaped = true else if (c == quote) quote = null
+                    continue
+                }
+                if (c == '\'' || c == '"' || c == '`') { quote = c; continue }
+                if (c == '{') depth++
+                if (c == '}') {
+                    depth--
+                    if (depth == 0) return source.substring(match.range.first, i + 1)
+                }
+            }
+            return source.substring(match.range.first, minOf(source.length, open + 12000))
+        }
+        return ""
+    }
+
+    private fun fetchExternalDeviceInitializer(host: String, pageHtml: String): String {
+        val expected = host.toHttpUrlOrNull() ?: return ""
+        val results = mutableListOf<String>()
+        for (src in extractScriptSources(pageHtml)) {
+            val url = expected.resolve(src) ?: continue
+            if (url.host != expected.host) continue // never send router cookies off-device
+            val body = try { get(url.toString()).second } catch (_: Exception) { "" }
+            val definition = functionBody(body, "initial_QueryAccessDeviceLink")
+            if (definition.isNotBlank()) {
+                results.add("SOURCE: ${url.encodedPath}\n$definition")
+            } else {
+                val marker = body.indexOf("initial_QueryAccessDeviceLink")
+                if (marker >= 0) {
+                    val from = (marker - 2500).coerceAtLeast(0)
+                    val to = (marker + 9000).coerceAtMost(body.length)
+                    results.add("SOURCE (context): ${url.encodedPath}\n${body.substring(from, to)}")
+                }
+            }
+        }
+        return results.joinToString("\n\n").take(12000)
+    }
+
     /**
      * Try a URL fragment copied from the router page itself. Some ZTE pages
      * build data requests with extra query parameters (SSID, InstanceID, etc.);
@@ -490,6 +552,13 @@ class RouterClient {
                         if (deviceInitializer.isBlank()) deviceInitializer = extractDeviceInitializer(pcBody)
                     } catch (e: Exception) {
                         // Non-fatal.
+                    }
+                    // The inline HTML contains only the call. Fetch referenced same-origin JS
+                    // and append the actual function definition for the diagnostic report.
+                    if (deviceInitializer.isNotBlank() && !deviceInitializer.contains("function initial_QueryAccessDeviceLink")) {
+                        val externalDefinition = fetchExternalDeviceInitializer(host, deviceViewBody) + "\n" +
+                            fetchExternalDeviceInitializer(host, pcViewBody)
+                        if (externalDefinition.isNotBlank()) deviceInitializer += "\n\n--- تعريف الدالة من ملفات JavaScript الخارجية ---\n" + externalDefinition
                     }
                     // Page token from the device view (or the parental view):
                     // device reads may need it instead of the login token (v1.7).
