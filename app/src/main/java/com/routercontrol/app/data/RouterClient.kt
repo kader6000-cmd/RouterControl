@@ -388,6 +388,40 @@ class RouterClient {
         return found.toList()
     }
 
+    /**
+     * Try a URL fragment copied from the router page itself. Some ZTE pages
+     * build data requests with extra query parameters (SSID, InstanceID, etc.);
+     * reducing those requests to only `_tag=<script>` can change the server
+     * context and produce SessionTimeout on otherwise valid sessions.
+     */
+    private fun fetchDeviceUrl(host: String, fragment: String, pageToken: String?): String {
+        val raw = fragment.trim().replace("\\/", "/")
+        val pathAndQuery = when {
+            raw.startsWith("http://", true) || raw.startsWith("https://", true) -> {
+                val parsed = raw.toHttpUrlOrNull() ?: return ""
+                val expected = host.toHttpUrlOrNull() ?: return ""
+                if (parsed.host != expected.host) return "" // never send router cookies off-device
+                parsed.encodedPath + if (parsed.encodedQuery != null) "?${parsed.encodedQuery}" else ""
+            }
+            raw.startsWith("?") -> "/$raw"
+            raw.startsWith("/") -> raw
+            raw.contains("?") -> "/$raw"
+            else -> "/?_type=menuData&_tag=${raw.substringAfterLast('/') }"
+        }
+        val withGuid = if (Regex("(?:^|[?&])_=").containsMatchIn(pathAndQuery)) pathAndQuery
+            else pathAndQuery + (if (pathAndQuery.contains('?')) "&" else "?") + "_=${nextGuid()}"
+        val variants = mutableListOf(withGuid)
+        pageToken?.let { variants.add(withGuid + (if (withGuid.contains('?')) "&" else "?") + "_sessionTOKEN=$it") }
+        sessToken?.let { variants.add(withGuid + (if (withGuid.contains('?')) "&" else "?") + "_sessionTOKEN=$it") }
+        var last = ""
+        for (path in variants.distinct()) {
+            val body = try { get(host.trimEnd('/') + path).second } catch (_: Exception) { "" }
+            last = body
+            if (body.isNotBlank() && !body.contains("SessionTimeout")) return body
+        }
+        return last
+    }
+
     /** Live WLAN + LAN devices. Requires a logged-in session (logs in first if needed). */
     suspend fun getDevices(settings: RouterSettings): DeviceFetch = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -448,6 +482,17 @@ class RouterClient {
                     viewStatus += " — توكن الصفحة: " + if (pageToken.isNullOrBlank()) "مش موجود" else "موجود"
                     val found = linkedMapOf<String, RouterDevice>()
                     var anyTimeout = false
+                    // First replay the complete URL fragments found in the page's
+                    // own JavaScript, preserving every firmware-specific parameter.
+                    // This is intentionally before guessed script-only requests.
+                    for (urlFragment in deviceUrls) {
+                        val body = fetchDeviceUrl(host, urlFragment, pageToken)
+                        if (body.contains("SessionTimeout")) anyTimeout = true
+                        if (body.isBlank() || body.contains("SessionTimeout")) continue
+                        val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "WLAN") +
+                            parseAccessDevices(body, "OBJ_WLAN_AD_ID", "WLAN")
+                        for (d in parsed) found.putIfAbsent(d.mac, d)
+                    }
                     // WLAN — H288A family script first, then any script the view named.
                     // v1.7: sweep every request shape per script (no token / page
                     // token / login token / POST) instead of one shape per release.
