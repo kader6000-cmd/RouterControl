@@ -1,80 +1,285 @@
 package com.routercontrol.app.data
 
+import android.util.Base64
+import java.security.KeyFactory
+import java.security.MessageDigest
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
+import org.w3c.dom.Element
+import javax.xml.parsers.DocumentBuilderFactory
+
 /**
- * Parental Control sync — UNTESTED, read this before trusting it.
+ * Parental Control sync — v1.1.
  *
- * What is VERIFIED:
- * - The web UI path (user screenshots, ZTE H298A admin manual): Internet >
- *   Parental Controls. One rule per device: Name, User Identity = MAC,
- *   Time Policy Everyday 00:00-23:59, Action "Ban Internet Access", On/Off radio.
- * - The ZTE Lua/CGI pattern itself (verified for login, devices, SSID, reboot):
- *   data calls are GET/POST to "/?_type=menuData&_tag=<script>_lua.lua&_=<guid>"
- *   and writes are form POSTs with IF_ACTION=Apply + _sessionTOKEN.
+ * What the v1.0 live test (2026-11-21) proved:
+ * - Login works and the router answers, BUT every data request came back with
+ *   <IF_ERRORSTR>SessionTimeout</IF_ERRORSTR> — and v1.0's success check
+ *   (body.contains("SUCC")) wrongly "confirmed" a script because the
+ *   SessionTimeout reply also carries <IF_ERRORPARAM>SUCC</IF_ERRORPARAM>.
+ *   Success is now checked STRICTLY on <IF_ERRORSTR>SUCC</IF_ERRORSTR>.
+ * - A SessionTimeout reply does NOT always mean a dead session: zte_tracker's
+ *   own notes (H3640) say a missing _tag answers SessionTimeout too, and a
+ *   re-login cannot fix a missing tag. So the probe must distinguish
+ *   "tag missing" from "session evicted".
  *
- * What is NOT verified (no public source covers it — zte_tracker only does
- * device tracking + reboot):
- * - The exact Lua script name for the Parental Controls page.
- * - The exact POST parameter names the page uses to enable/disable/create a rule.
+ * How v1.1 discovers the real endpoint (pattern verified in zte_tracker's
+ * F680 parental-control support — get_parental_controls /
+ * set_parental_control_enabled):
+ * 1. Open the parental view the way the web UI does:
+ *    GET /?_type=menuView&_tag=parentCtrl&Menu3Location=0 — the returned HTML
+ *    embeds _sessionTmpToken, the token a write must carry.
+ * 2. GET the data script /?_type=menuData&_tag=<script> and parse the
+ *    <Instance> elements: _InstID, Name, Enable, UserIdentity (MAC).
+ * 3. Toggle by instance: POST IF_ACTION=Apply, Enable=1/0, _InstID=<id>,
+ *    _sessionTOKEN=<page token>, with a Check header (SHA256 of the body,
+ *    RSA-encrypted with ZTE's 2048-bit public key; plain SHA256 hex and
+ *    no-Check are tried as fallbacks).
  *
- * How v1 handles that honestly:
- * 1. It NEVER claims a rule change reached the router unless the router's
- *    reply contains SUCC (the standard <IF_ERRORSTR>SUCC</IF_ERRORSTR> marker).
- * 2. It probes a small list of candidate script names (below) that follow ZTE's
- *    observed naming pattern (<area>_<function>_lua.lua). The first candidate
- *    that answers with SUCC is remembered in Settings as the confirmed script.
- * 3. If no candidate answers, the toggle still updates the LOCAL rule list and
- *    marks the rule pendingSync=true, and the UI says clearly that the change
- *    was NOT confirmed on the router.
- * 4. Settings has a manual "parental endpoint override" field: once the real
- *    script name is captured (open the Parental Controls page in a desktop
- *    browser, open DevTools > Network, toggle a rule, and read the _tag= value),
- *    paste it there and no rebuild is needed.
- * 5. The Diagnostics screen shows every probe attempt with its HTTP code and a
- *    short reply snippet, so the first live test can identify the real endpoint.
+ * The data script name for H288A is still unconfirmed — candidates are tried
+ * in order, starting with firewall_parentctrl_lua.lua (the F680 one).
+ * Nothing is reported as "confirmed on the router" unless the router's
+ * <IF_ERRORSTR> is SUCC/SUCCESS/OK.
  */
 object ParentalSync {
 
-    /** Candidate script names — GUESSES from ZTE's naming pattern, NOT verified. */
+    /** Data script candidates — firewall_parentctrl_lua.lua is the verified F680 one. */
     val CANDIDATE_SCRIPTS = listOf(
+        "firewall_parentctrl_lua.lua",
         "internet_parental_lua.lua",
         "security_parental_lua.lua",
         "parental_lua.lua"
     )
 
-    private fun looksLikeSuccess(body: String): Boolean {
-        val b = body
-        return b.contains("SUCC") || b.contains("Parental") || b.contains("PARENTAL")
+    private const val VIEW_TAG = "parentCtrl&Menu3Location=0"
+
+    /** ZTE's 2048-bit RSA public key for the Check header (from zte_tracker). */
+    private const val ZTE_PUBLIC_KEY_PEM =
+        "-----BEGIN PUBLIC KEY-----\n" +
+        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAodPTerkUVCYmv28SOfRV\n" +
+        "7UKHVujx/HjCUTAWy9l0L5H0JV0LfDudTdMNPEKloZsNam3YrtEnq6jqMLJV4ASb\n" +
+        "1d6axmIgJ636wyTUS99gj4BKs6bQSTUSE8h/QkUYv4gEIt3saMS0pZpd90y6+B/9\n" +
+        "hZxZE/RKU8e+zgRqp1/762TB7vcjtjOwXRDEL0w71Jk9i8VUQ59MR1Uj5E8X3WIc\n" +
+        "fYSK5RWBkMhfaTRM6ozS9Bqhi40xlSOb3GBxCmliCifOJNLoO9kFoWgAIw5hkSIb\n" +
+        "GH+4Csop9Uy8VvmmB+B3ubFLN35qIa5OG5+SDXn4L7FeAA5lRiGxRi8tsWrtew8w\n" +
+        "nwIDAQAB\n" +
+        "-----END PUBLIC KEY-----"
+
+    data class FetchedRules(
+        val rules: List<ParentalRule>,
+        val tag: String,
+        val pageToken: String?,
+        val entries: List<DiagnosticsEntry>
+    )
+
+    /** Strict success: the router's own error string must be SUCC, and no SessionTimeout. */
+    fun looksLikeSuccess(body: String): Boolean {
+        if (body.contains("SessionTimeout")) return false
+        return body.contains("<IF_ERRORSTR>SUCC</IF_ERRORSTR>") ||
+            body.contains("<IF_ERRORSTR>SUCCESS</IF_ERRORSTR>") ||
+            body.contains("<IF_ERRORSTR>OK</IF_ERRORSTR>")
     }
+
+    fun hasSessionTimeout(body: String): Boolean = body.contains("SessionTimeout")
 
     private fun snippet(body: String): String = body.take(300)
 
-    /** Try each candidate script; return one DiagnosticsEntry per attempt. */
-    suspend fun probe(client: RouterClient, settings: RouterSettings): List<DiagnosticsEntry> {
-        val out = mutableListOf<DiagnosticsEntry>()
-        val login = client.login(settings)
-        if (login is RouterResult.Failure) {
-            out.add(DiagnosticsEntry("تسجيل الدخول", login.message, false))
-            return out
+    private fun sha256Hex(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    /** Check header: SHA256 hex of the urlencoded body, RSA-encrypted (ZTE 2048-bit key). */
+    private fun checkHeaderRsa(postData: String): String? {
+        return try {
+            val digestHex = sha256Hex(postData)
+            val pem = ZTE_PUBLIC_KEY_PEM
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("\\s".toRegex(), "")
+            val keyBytes = Base64.decode(pem, Base64.DEFAULT)
+            val key = KeyFactory.getInstance("RSA")
+                .generatePublic(X509EncodedKeySpec(keyBytes))
+            val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            val encrypted = cipher.doFinal(digestHex.toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(encrypted, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            null
         }
-        for (script in CANDIDATE_SCRIPTS) {
-            val (code, body) = client.rawGet(settings, "?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}")
-            val ok = code == 200 && looksLikeSuccess(body)
-            out.add(
-                DiagnosticsEntry(
-                    label = script,
-                    detail = "HTTP $code — " + if (body.isBlank()) "(رد فاضي)" else snippet(body),
-                    ok = ok
-                )
-            )
+    }
+
+    private fun extractPageToken(viewHtml: String): String? {
+        val m = Regex("_sessionTmpToken\\s*=\\s*[\"']([^\"']+)[\"']").find(viewHtml) ?: return null
+        val raw = m.groupValues[1]
+        // The page embeds the token with \xNN escapes — decode them.
+        val sb = StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            if (raw[i] == '\\' && i + 3 < raw.length && raw[i + 1] == 'x') {
+                val hex = raw.substring(i + 2, i + 4)
+                val code = hex.toIntOrNull(16)
+                if (code != null) {
+                    sb.append(code.toChar())
+                    i += 4
+                    continue
+                }
+            }
+            sb.append(raw[i])
+            i++
+        }
+        return sb.toString()
+    }
+
+    private fun parseInstances(xml: String): List<Map<String, String>> {
+        val out = mutableListOf<Map<String, String>>()
+        if (xml.isBlank()) return out
+        try {
+            val factory = DocumentBuilderFactory.newInstance()
+            factory.isNamespaceAware = false
+            val doc = factory.newDocumentBuilder().parse(xml.byteInputStream(Charsets.UTF_8))
+            val nodes = doc.getElementsByTagName("Instance")
+            for (i in 0 until nodes.length) {
+                val el = nodes.item(i) as? Element ?: continue
+                val fields = mutableMapOf<String, String>()
+                val children = el.childNodes
+                for (j in 0 until children.length) {
+                    val child = children.item(j) as? Element ?: continue
+                    fields[child.tagName] = child.textContent?.trim() ?: ""
+                }
+                if (fields.isNotEmpty()) out.add(fields)
+            }
+        } catch (e: Exception) {
+            // Malformed XML: return whatever was parsed so far.
         }
         return out
     }
 
+    private fun fieldsToRule(fields: Map<String, String>): ParentalRule? {
+        val instId = fields["_InstID"] ?: fields["InstID"] ?: return null
+        val enable = fields["Enable"] ?: "0"
+        val enabled = enable.trim().lowercase() in setOf("1", "true", "yes", "on")
+        return ParentalRule(
+            name = (fields["Name"] ?: instId).trim().ifBlank { instId },
+            mac = (fields["UserIdentity"] ?: fields["MACAddress"] ?: "").trim().uppercase(),
+            enabled = enabled,
+            instanceId = instId.trim()
+        )
+    }
+
+    /**
+     * Discover the parental-control data script the way the web UI does:
+     * open the view, then try each data script and parse real <Instance> rules.
+     * Returns the rules found (empty if none), the working tag, the page token,
+     * and one DiagnosticsEntry per attempt.
+     */
+    suspend fun fetchRules(client: RouterClient, settings: RouterSettings): FetchedRules {
+        val entries = mutableListOf<DiagnosticsEntry>()
+        if (!client.isLoggedIn()) {
+            val login = client.login(settings)
+            if (login is RouterResult.Failure) {
+                entries.add(DiagnosticsEntry("تسجيل الدخول", login.message, false))
+                return FetchedRules(emptyList(), "", null, entries)
+            }
+        }
+        // Device fetch sanity check — shows whether data requests work at all.
+        val devices = client.getDevices(settings)
+        entries.add(
+            DiagnosticsEntry(
+                "جلب الأجهزة (مين أونلاين)",
+                if (devices.error == null) "تم — ${devices.devices.size} جهاز" else devices.error,
+                devices.error == null
+            )
+        )
+        // 1. Open the parental view; the HTML embeds _sessionTmpToken.
+        val (viewCode, viewHtml) = client.rawGet(
+            settings,
+            "?_type=menuView&_tag=$VIEW_TAG&_=${System.currentTimeMillis()}"
+        )
+        val pageToken = extractPageToken(viewHtml)
+        entries.add(
+            DiagnosticsEntry(
+                "صفحة التحكم الأبوي (parentCtrl)",
+                "HTTP $viewCode — " + if (viewHtml.isBlank()) "(رد فاضي)" else
+                    "توكن الصفحة: " + (if (pageToken.isNullOrBlank()) "مش موجود" else "موجود") +
+                    " — " + snippet(viewHtml),
+                viewCode == 200 && !hasSessionTimeout(viewHtml)
+            )
+        )
+        // 2. Try each data script.
+        for (script in CANDIDATE_SCRIPTS) {
+            val (code, body) = client.rawGet(
+                settings,
+                "?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}"
+            )
+            val timeout = hasSessionTimeout(body)
+            val ok = code == 200 && looksLikeSuccess(body)
+            val instances = if (ok) parseInstances(body) else emptyList()
+            val rules = instances.mapNotNull { fieldsToRule(it) }
+            entries.add(
+                DiagnosticsEntry(
+                    label = script,
+                    detail = "HTTP $code — " +
+                        (if (timeout) "SessionTimeout (العنوان مش موجود في السوفت، أو الجلسة اتقطعت) — " else "") +
+                        (if (body.isBlank()) "(رد فاضي)" else snippet(body)),
+                    ok = ok && rules.isNotEmpty()
+                )
+            )
+            if (ok && rules.isNotEmpty()) {
+                return FetchedRules(rules, script, pageToken, entries)
+            }
+        }
+        return FetchedRules(emptyList(), "", pageToken, entries)
+    }
+
+    /** Backwards-compatible probe: discovery entries for the Diagnostics screen. */
+    suspend fun probe(client: RouterClient, settings: RouterSettings): List<DiagnosticsEntry> {
+        return fetchRules(client, settings).entries
+    }
+
+    private suspend fun postToggle(
+        client: RouterClient,
+        settings: RouterSettings,
+        tag: String,
+        params: LinkedHashMap<String, String>,
+        pageToken: String?
+    ): Pair<Int, String> {
+        // Build the urlencoded body once — the Check header is computed over this exact string.
+        val encoded = params.entries.joinToString("&") { (k, v) ->
+            java.net.URLEncoder.encode(k, "UTF-8") + "=" + java.net.URLEncoder.encode(v, "UTF-8")
+        }
+        val rsaCheck = checkHeaderRsa(encoded)
+        val attempts = mutableListOf<Pair<String, String?>>()
+        if (rsaCheck != null) attempts.add("rsa" to rsaCheck)
+        attempts.add("plain" to sha256Hex(encoded))
+        attempts.add("none" to null)
+        var last: Pair<Int, String> = 0 to ""
+        for ((mode, check) in attempts) {
+            val result = client.rawPostChecked(
+                settings,
+                "?_type=menuData&_tag=$tag&_=${System.currentTimeMillis()}",
+                encoded,
+                check
+            )
+            last = result
+            if (result.first == 200 && looksLikeSuccess(result.second)) {
+                return result
+            }
+            // A SessionTimeout on a write means the session/token is wrong — retrying
+            // other Check modes will not help; stop and report it.
+            if (hasSessionTimeout(result.second)) break
+            // Keep the last attempt's result for the error message; the loop tries the next mode.
+            @Suppress("UNUSED_VARIABLE")
+            val unusedMode = mode
+        }
+        return last
+    }
+
     /**
      * Enable/disable one rule on the router.
-     * Returns Success ONLY if the router reply contains SUCC.
-     * The POST field names mirror the web form (Name / User Identity / Action /
-     * Time Policy) and are UNTESTED — see the class comment.
+     * Prefers the instance-based toggle (verified pattern): IF_ACTION=Apply,
+     * Enable, _InstID, _sessionTOKEN from the parental page, Check header.
+     * Falls back to the old name-based form only when the rule has no instance id.
+     * Returns Success ONLY on a strict SUCC reply.
      */
     suspend fun applyRule(
         client: RouterClient,
@@ -82,35 +287,60 @@ object ParentalSync {
         rule: ParentalRule,
         enabled: Boolean
     ): RouterResult {
-        val script = settings.parentalScript.ifBlank {
-            // No confirmed script yet: probe first and remember a working one.
-            val probe = probe(client, settings)
-            val working = probe.firstOrNull { it.ok }?.label
-            if (working == null) {
+        val tag: String
+        var pageToken: String? = null
+        if (settings.parentalScript.isNotBlank()) {
+            tag = settings.parentalScript
+            // Fresh page token for the write.
+            val (_, viewHtml) = client.rawGet(
+                settings,
+                "?_type=menuView&_tag=$VIEW_TAG&_=${System.currentTimeMillis()}"
+            )
+            pageToken = extractPageToken(viewHtml)
+        } else {
+            val fetched = fetchRules(client, settings)
+            if (fetched.tag.isBlank()) {
                 return RouterResult.Failure(
                     "لسه مش متأكد من عنوان صفحة التحكم الأبوي في الروتر — القاعدة اتحفظت محليا بس، وجرّب صفحة التشخيص",
-                    probe.joinToString("\n") { "${it.label}: ${it.detail}" }.take(500)
+                    fetched.entries.joinToString("\n") { "${it.label}: ${it.detail}" }.take(500)
                 )
             }
-            working
+            tag = fetched.tag
+            pageToken = fetched.pageToken
         }
         if (!client.isLoggedIn()) {
             val login = client.login(settings)
             if (login is RouterResult.Failure) return login
         }
+        if (rule.instanceId.isNotBlank()) {
+            val params = linkedMapOf(
+                "IF_ACTION" to "Apply",
+                "Enable" to if (enabled) "1" else "0",
+                "_InstID" to rule.instanceId,
+                "_sessionTOKEN" to (pageToken ?: client.currentSessionToken() ?: "")
+            )
+            val (code, body) = postToggle(client, settings, tag, params, pageToken)
+            if (code == 200 && looksLikeSuccess(body)) {
+                return RouterResult.Success("تم تطبيق القاعدة على الروتر", snippet(body))
+            }
+            return RouterResult.Failure(
+                "الروتر مردّش بتأكيد على تغيير القاعدة (HTTP $code) — اتحفظت محليا بس",
+                snippet(body)
+            )
+        }
+        // No instance id (rule was never synced from the router): old name-based form.
         val params = linkedMapOf<String, String>()
         params["IF_ACTION"] = "Apply"
         params["Name"] = rule.name
         params["UserIdentity"] = rule.mac
         params["Enable"] = if (enabled) "1" else "0"
         params["Action"] = rule.action
-        params["Days"] = if (rule.daysEveryday) "Everyday" else "Everyday"
+        params["Days"] = "Everyday"
         params["StartHour"] = (rule.startMinutes / 60).toString()
         params["StartMin"] = (rule.startMinutes % 60).toString()
         params["EndHour"] = (rule.endMinutes / 60).toString()
         params["EndMin"] = (rule.endMinutes % 60).toString()
-        if (rule.instanceId.isNotBlank()) params["_InstID"] = rule.instanceId
-        val (code, body) = client.rawPost(settings, "?_type=menuData&_tag=$script", params)
+        val (code, body) = client.rawPost(settings, "?_type=menuData&_tag=$tag", params)
         if (code == 200 && looksLikeSuccess(body)) {
             return RouterResult.Success("تم تطبيق القاعدة على الروتر", snippet(body))
         }
@@ -122,23 +352,24 @@ object ParentalSync {
 
     /**
      * Create a new rule for a device that has none yet (Who's Online > Block).
-     * Same UNTESTED caveats as applyRule; IF_ACTION value is a guess.
+     * Uses the discovered data tag; the Add form is still the web form's shape.
      */
     suspend fun createRule(
         client: RouterClient,
         settings: RouterSettings,
         rule: ParentalRule
     ): RouterResult {
-        val script = settings.parentalScript.ifBlank {
-            val probe = probe(client, settings)
-            val working = probe.firstOrNull { it.ok }?.label
-            if (working == null) {
+        val tag = if (settings.parentalScript.isNotBlank()) {
+            settings.parentalScript
+        } else {
+            val fetched = fetchRules(client, settings)
+            if (fetched.tag.isBlank()) {
                 return RouterResult.Failure(
                     "لسه مش متأكد من عنوان صفحة التحكم الأبوي في الروتر — القاعدة اتحفظت محليا بس، وجرّب صفحة التشخيص",
-                    probe.joinToString("\n") { "${it.label}: ${it.detail}" }.take(500)
+                    fetched.entries.joinToString("\n") { "${it.label}: ${it.detail}" }.take(500)
                 )
             }
-            working
+            fetched.tag
         }
         if (!client.isLoggedIn()) {
             val login = client.login(settings)
@@ -155,7 +386,7 @@ object ParentalSync {
         params["StartMin"] = "0"
         params["EndHour"] = "23"
         params["EndMin"] = "59"
-        val (code, body) = client.rawPost(settings, "?_type=menuData&_tag=$script", params)
+        val (code, body) = client.rawPost(settings, "?_type=menuData&_tag=$tag", params)
         if (code == 200 && looksLikeSuccess(body)) {
             return RouterResult.Success("تم إنشاء القاعدة على الروتر", snippet(body))
         }
