@@ -8,8 +8,10 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.w3c.dom.Element
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -60,6 +62,8 @@ class RouterClient {
     private var guid = System.currentTimeMillis()
     private var sessToken: String? = null
     private var loggedIn = false
+    /** Base URL of the router, for the Referer header the web UI always sends. */
+    private var refererBase: String? = null
 
     private fun nextGuid(): Long {
         guid += 1
@@ -94,13 +98,15 @@ class RouterClient {
     private fun base(settings: RouterSettings): String = settings.baseUrl()
 
     private fun get(url: String): Pair<Int, String> {
-        val req = Request.Builder()
+        val builder = Request.Builder()
             .url(url)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Accept", "application/json, text/javascript, */*; q=0.01")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-            .get()
-            .build()
+        // The browser always sends the page as Referer; some ZTE firmwares
+        // answer SessionTimeout to XHR calls without it.
+        refererBase?.let { builder.header("Referer", "$it/") }
+        val req = builder.get().build()
         http.newCall(req).execute().use { resp ->
             return resp.code to (resp.body?.string() ?: "")
         }
@@ -109,13 +115,13 @@ class RouterClient {
     private fun postForm(url: String, params: Map<String, String>): Pair<Int, String> {
         val form = FormBody.Builder()
         for ((k, v) in params) form.add(k, v)
-        val req = Request.Builder()
+        val builder = Request.Builder()
             .url(url)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Accept", "application/json, text/javascript, */*; q=0.01")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-            .post(form.build())
-            .build()
+        refererBase?.let { builder.header("Referer", "$it/") }
+        val req = builder.post(form.build()).build()
         http.newCall(req).execute().use { resp ->
             return resp.code to (resp.body?.string() ?: "")
         }
@@ -135,6 +141,16 @@ class RouterClient {
                 }
                 if (host.toHttpUrlOrNull() == null) {
                     return@withContext RouterResult.Failure("عنوان الروتر مش صحيح — مثال: 192.168.1.1")
+                }
+                refererBase = host
+                // Browser-style page load first: sets the router's cookies
+                // (_TESTCOOKIESUPPORT / SID) the way a real page load does.
+                // zte_tracker notes that without this, some endpoints answer
+                // SessionTimeout. Best effort — login decides success.
+                try {
+                    get("$host/")
+                } catch (e: Exception) {
+                    // Ignore; the login steps below will fail loudly if unreachable.
                 }
                 // Step 1: challenge token (XML text).
                 val (_, tokenBody) = get("$host/?_type=loginData&_tag=login_token&_=${nextGuid()}")
@@ -245,6 +261,39 @@ class RouterClient {
             }
         }
 
+    /**
+     * POST with an already-urlencoded body and an optional Check header
+     * (ZTE verifies a SHA256/RSA Check on signed form POSTs). The body string
+     * is sent exactly as given, so the Check header matches it byte for byte.
+     */
+    suspend fun rawPostChecked(
+        settings: RouterSettings,
+        pathAndQuery: String,
+        encodedBody: String,
+        check: String?
+    ): Pair<Int, String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            try {
+                val body = encodedBody.toRequestBody(
+                    "application/x-www-form-urlencoded; charset=UTF-8".toMediaType()
+                )
+                val builder = Request.Builder()
+                    .url("${base(settings)}/$pathAndQuery")
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+                    .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                if (check != null) builder.header("Check", check)
+                refererBase?.let { builder.header("Referer", "$it/") }
+                http.newCall(builder.post(body).build()).execute().use { resp ->
+                    resp.code to (resp.body?.string() ?: "")
+                }
+            } catch (e: Exception) {
+                0 to (e.message ?: "خطأ غير معروف")
+            }
+        }
+    }
+
     fun currentSessionToken(): String? = sessToken
 
     /** Live WLAN + LAN devices. Requires a logged-in session (logs in first if needed). */
@@ -256,37 +305,63 @@ class RouterClient {
                     if (login is RouterResult.Failure) return@withContext DeviceFetch(emptyList(), login.message)
                 }
                 val host = base(settings)
-                // Context setup for the local-network view (zte_tracker: menuView localNetStatus).
-                try {
-                    get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
-                } catch (e: Exception) {
-                    // Non-fatal; the data requests below decide success.
-                }
-                val found = linkedMapOf<String, RouterDevice>()
-                // WLAN — H288A family script.
-                val (_, wlanBody) = get("$host/?_type=menuData&_tag=accessdev_ssiddev_lua.lua&_=${nextGuid()}")
-                for (d in parseAccessDevices(wlanBody, "OBJ_ACCESSDEV_ID", "WLAN")) {
-                    found.putIfAbsent(d.mac, d)
-                }
-                // LAN — same element id on the H288A family.
-                val (_, lanBody) = get("$host/?_type=menuData&_tag=accessdev_landevs_lua.lua&_=${nextGuid()}")
-                for (d in parseAccessDevices(lanBody, "OBJ_ACCESSDEV_ID", "LAN")) {
-                    found.putIfAbsent(d.mac, d)
-                }
-                // Fallback: F6640-family WLAN script, only if nothing came back.
-                if (found.isEmpty()) {
-                    val (_, fbBody) = get("$host/?_type=menuData&_tag=wlan_client_stat_lua.lua&_=${nextGuid()}")
-                    for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
+                refererBase = host
+                var attempt = 0
+                while (true) {
+                    // Context setup for the local-network view (zte_tracker: menuView localNetStatus).
+                    try {
+                        get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
+                    } catch (e: Exception) {
+                        // Non-fatal; the data requests below decide success.
+                    }
+                    val found = linkedMapOf<String, RouterDevice>()
+                    // WLAN — H288A family script.
+                    val (_, wlanBody) = get("$host/?_type=menuData&_tag=accessdev_ssiddev_lua.lua&_=${nextGuid()}")
+                    for (d in parseAccessDevices(wlanBody, "OBJ_ACCESSDEV_ID", "WLAN")) {
                         found.putIfAbsent(d.mac, d)
                     }
-                }
-                if (found.isEmpty()) {
+                    // LAN — same element id on the H288A family.
+                    val (_, lanBody) = get("$host/?_type=menuData&_tag=accessdev_landevs_lua.lua&_=${nextGuid()}")
+                    for (d in parseAccessDevices(lanBody, "OBJ_ACCESSDEV_ID", "LAN")) {
+                        found.putIfAbsent(d.mac, d)
+                    }
+                    // Fallback: F6640-family WLAN script, only if nothing came back.
+                    var fbBody = ""
+                    if (found.isEmpty()) {
+                        val (_, body) = get("$host/?_type=menuData&_tag=wlan_client_stat_lua.lua&_=${nextGuid()}")
+                        fbBody = body
+                        for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
+                            found.putIfAbsent(d.mac, d)
+                        }
+                    }
+                    if (found.isNotEmpty()) {
+                        return@withContext DeviceFetch(found.values.sortedBy { it.name.lowercase(Locale.US) }, null)
+                    }
+                    // Empty result: was the session evicted? An evicted session
+                    // fails as a SessionTimeout router error, not an HTTP error
+                    // (zte_tracker #75) — re-login once and retry the fetch.
+                    val timedOut = wlanBody.contains("SessionTimeout") ||
+                        lanBody.contains("SessionTimeout") ||
+                        fbBody.contains("SessionTimeout")
+                    if (timedOut && attempt == 0) {
+                        attempt++
+                        val relogin = loginUnLocked(settings)
+                        if (relogin is RouterResult.Failure) {
+                            return@withContext DeviceFetch(emptyList(), relogin.message)
+                        }
+                        continue
+                    }
+                    if (timedOut) {
+                        return@withContext DeviceFetch(
+                            emptyList(),
+                            "الروتر رفض الجلسة (SessionTimeout) — لو صفحة الروتر مفتوحة في المتصفح، اقفلها وحاول تاني من التطبيق"
+                        )
+                    }
                     return@withContext DeviceFetch(
                         emptyList(),
                         "الروتر رد بس من غير أجهزة — ممكن مفيش جهاز متصل دلوقتي، أو سوفت الروتر رد بشكل مختلف عن المتوقع (شوف صفحة التشخيص)"
                     )
                 }
-                DeviceFetch(found.values.sortedBy { it.name.lowercase(Locale.US) }, null)
             } catch (e: Exception) {
                 DeviceFetch(emptyList(), "فشل جلب الأجهزة: ${e.message ?: "خطأ غير معروف"}")
             }
