@@ -373,7 +373,7 @@ object Screens {
         Column(Modifier.fillMaxSize()) {
             Text("التشخيص", color = Color.White, fontSize = 18.sp)
             Text(
-                "الصفحة دي بتفحص عنوان صفحة التحكم الأبوي في الروتر. عنوان الدخول وقايمة الأجهزة متأكدين وشغالين من مكتبة ZTE، لكن عنوان التحكم الأبوي لسه غير مؤكد من أي مصدر عام — الفحص ده هو اللي هيحدده على روترك بالظبط.",
+                "التشخيص يفحص صفحة الأجهزة والتحكم الأبوي، ويعرض كود initial_QueryAccessDeviceLink الذي تستخدمه واجهة الراوتر لجلب الأجهزة، حتى نحدد طلب API الحقيقي بدل تخمينه.",
                 color = Color.LightGray, fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
