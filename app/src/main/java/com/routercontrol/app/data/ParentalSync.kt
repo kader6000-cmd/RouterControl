@@ -205,8 +205,20 @@ object ParentalSync {
                 viewCode == 200 && !hasSessionTimeout(viewHtml)
             )
         )
+        // The parental view's own HTML names the data scripts this firmware
+        // uses — read them out and try them alongside the public guesses (v1.2).
+        val viewTags = client.extractLuaTags(viewHtml)
+        val candidates = (CANDIDATE_SCRIPTS + viewTags).distinct()
+        entries.add(
+            DiagnosticsEntry(
+                "عناوين لقيناها في صفحة الروتر",
+                if (viewTags.isEmpty()) "مفيش أسماء سكربتات ظاهرة في الصفحة — هنجرّب العناوين المعروفة بس"
+                else viewTags.joinToString("، "),
+                viewTags.isNotEmpty()
+            )
+        )
         // 2. Try each data script.
-        for (script in CANDIDATE_SCRIPTS) {
+        for (script in candidates) {
             val (code, body) = client.rawGet(
                 settings,
                 "?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}"
