@@ -142,9 +142,20 @@ object ParentalSync {
                 val el = nodes.item(i) as? Element ?: continue
                 val fields = mutableMapOf<String, String>()
                 val children = el.childNodes
+                // Two shapes exist. F680 style: direct fields (<Name>Ahmed</Name>).
+                // H288A GR5.1T16 style (seen live 2026-11-21): name/value pairs
+                // (<ParaName>_InstID</ParaName><ParaValue>DEV.PCUser1</ParaValue>).
+                var pendingName: String? = null
                 for (j in 0 until children.length) {
                     val child = children.item(j) as? Element ?: continue
-                    fields[child.tagName] = child.textContent?.trim() ?: ""
+                    if (child.tagName == "ParaName") {
+                        pendingName = child.textContent?.trim()
+                    } else if (child.tagName == "ParaValue" && pendingName != null) {
+                        fields[pendingName] = child.textContent?.trim() ?: ""
+                        pendingName = null
+                    } else {
+                        fields[child.tagName] = child.textContent?.trim() ?: ""
+                    }
                 }
                 if (fields.isNotEmpty()) out.add(fields)
             }
@@ -156,11 +167,15 @@ object ParentalSync {
 
     private fun fieldsToRule(fields: Map<String, String>): ParentalRule? {
         val instId = fields["_InstID"] ?: fields["InstID"] ?: return null
-        val enable = fields["Enable"] ?: "0"
+        val enable = fields["Enable"] ?: fields["Enabled"] ?: "0"
         val enabled = enable.trim().lowercase() in setOf("1", "true", "yes", "on")
+        val name = (fields["Name"] ?: fields["UserName"] ?: fields["PCName"] ?: fields["Alias"] ?: instId)
+            .trim().ifBlank { instId }
+        val mac = (fields["UserIdentity"] ?: fields["MACAddress"] ?: fields["Mac"] ?: fields["DeviceMac"] ?: "")
+            .trim().uppercase()
         return ParentalRule(
-            name = (fields["Name"] ?: instId).trim().ifBlank { instId },
-            mac = (fields["UserIdentity"] ?: fields["MACAddress"] ?: "").trim().uppercase(),
+            name = name,
+            mac = mac,
             enabled = enabled,
             instanceId = instId.trim()
         )
@@ -232,6 +247,9 @@ object ParentalSync {
                     label = script,
                     detail = "HTTP $code — " +
                         (if (timeout) "SessionTimeout (العنوان مش موجود في السوفت، أو الجلسة اتقطعت) — " else "") +
+                        (if (rules.isNotEmpty()) "القواعد: " + rules.joinToString("، ") {
+                            it.name + if (it.enabled) " (شغالة)" else " (مقفولة)"
+                        } + " — " else "") +
                         (if (body.isBlank()) "(رد فاضي)" else snippet(body)),
                     ok = ok && rules.isNotEmpty()
                 )
