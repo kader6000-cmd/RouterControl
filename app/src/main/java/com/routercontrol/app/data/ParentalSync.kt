@@ -237,6 +237,13 @@ object ParentalSync {
                 devices.debugDeviceUrls.isNotEmpty()
             )
         )
+        entries.add(
+            DiagnosticsEntry(
+                "كود استدعاء الأجهزة من واجهة الراوتر",
+                devices.debugDeviceInitializer.ifBlank { "الدالة initial_QueryAccessDeviceLink لم تظهر في HTML المحمّل" },
+                devices.debugDeviceInitializer.isNotBlank()
+            )
+        )
         // 1. Open the parental view; the HTML embeds _sessionTmpToken.
         val (viewCode, viewHtml) = client.rawGet(
             settings,
