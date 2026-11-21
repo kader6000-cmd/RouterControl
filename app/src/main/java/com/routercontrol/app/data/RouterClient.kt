@@ -296,6 +296,26 @@ class RouterClient {
 
     fun currentSessionToken(): String? = sessToken
 
+    /**
+     * Pull data-script names out of a router page's HTML/JS. The web UI's own
+     * pages call their data scripts by name (e.g. ?_type=menuData&_tag=..._lua.lua),
+     * so the page HTML is the authoritative list of tags for THIS firmware —
+     * better than guessing names. Used for device + parental discovery (v1.2).
+     */
+    fun extractLuaTags(html: String): List<String> {
+        val found = linkedSetOf<String>()
+        val tagRe = Regex("_tag=([A-Za-z0-9_\\-.]+)")
+        for (m in tagRe.findAll(html)) {
+            val v = m.groupValues[1]
+            if (v.endsWith("_lua.lua")) found.add(v)
+        }
+        val quotedRe = Regex("[\"']([A-Za-z0-9_\\-./]+_lua\\.lua)[\"']")
+        for (m in quotedRe.findAll(html)) {
+            found.add(m.groupValues[1].substringAfterLast("/"))
+        }
+        return found.toList()
+    }
+
     /** Live WLAN + LAN devices. Requires a logged-in session (logs in first if needed). */
     suspend fun getDevices(settings: RouterSettings): DeviceFetch = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -310,27 +330,43 @@ class RouterClient {
                 var result: DeviceFetch? = null
                 while (result == null) {
                     // Context setup for the local-network view (zte_tracker: menuView localNetStatus).
+                    // The view HTML itself names the data scripts this firmware
+                    // uses — read them out instead of only guessing names (v1.2).
+                    var viewTags: List<String> = emptyList()
                     try {
-                        get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
+                        val (_, viewBody) = get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
+                        viewTags = extractLuaTags(viewBody)
                     } catch (e: Exception) {
                         // Non-fatal; the data requests below decide success.
                     }
                     val found = linkedMapOf<String, RouterDevice>()
-                    // WLAN — H288A family script.
-                    val (_, wlanBody) = get("$host/?_type=menuData&_tag=accessdev_ssiddev_lua.lua&_=${nextGuid()}")
-                    for (d in parseAccessDevices(wlanBody, "OBJ_ACCESSDEV_ID", "WLAN")) {
-                        found.putIfAbsent(d.mac, d)
+                    var anyTimeout = false
+                    // WLAN — H288A family script first, then any script the view named.
+                    val wlanCandidates = (listOf("accessdev_ssiddev_lua.lua") + viewTags).distinct()
+                    for (script in wlanCandidates) {
+                        val (_, body) = get("$host/?_type=menuData&_tag=$script&_=${nextGuid()}")
+                        if (body.contains("SessionTimeout")) anyTimeout = true
+                        val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "WLAN")
+                        if (parsed.isNotEmpty()) {
+                            for (d in parsed) found.putIfAbsent(d.mac, d)
+                            break
+                        }
                     }
                     // LAN — same element id on the H288A family.
-                    val (_, lanBody) = get("$host/?_type=menuData&_tag=accessdev_landevs_lua.lua&_=${nextGuid()}")
-                    for (d in parseAccessDevices(lanBody, "OBJ_ACCESSDEV_ID", "LAN")) {
-                        found.putIfAbsent(d.mac, d)
+                    val lanCandidates = (listOf("accessdev_landevs_lua.lua") + viewTags).distinct()
+                    for (script in lanCandidates) {
+                        val (_, body) = get("$host/?_type=menuData&_tag=$script&_=${nextGuid()}")
+                        if (body.contains("SessionTimeout")) anyTimeout = true
+                        val parsed = parseAccessDevices(body, "OBJ_ACCESSDEV_ID", "LAN")
+                        if (parsed.isNotEmpty()) {
+                            for (d in parsed) found.putIfAbsent(d.mac, d)
+                            break
+                        }
                     }
                     // Fallback: F6640-family WLAN script, only if nothing came back.
-                    var fbBody = ""
                     if (found.isEmpty()) {
-                        val (_, body) = get("$host/?_type=menuData&_tag=wlan_client_stat_lua.lua&_=${nextGuid()}")
-                        fbBody = body
+                        val (_, fbBody) = get("$host/?_type=menuData&_tag=wlan_client_stat_lua.lua&_=${nextGuid()}")
+                        if (fbBody.contains("SessionTimeout")) anyTimeout = true
                         for (d in parseAccessDevices(fbBody, "OBJ_WLAN_AD_ID", "WLAN")) {
                             found.putIfAbsent(d.mac, d)
                         }
@@ -342,9 +378,7 @@ class RouterClient {
                     // Empty result: was the session evicted? An evicted session
                     // fails as a SessionTimeout router error, not an HTTP error
                     // (zte_tracker #75) — re-login once and retry the fetch.
-                    val timedOut = wlanBody.contains("SessionTimeout") ||
-                        lanBody.contains("SessionTimeout") ||
-                        fbBody.contains("SessionTimeout")
+                    val timedOut = anyTimeout
                     if (timedOut && attempt == 0) {
                         attempt++
                         val relogin = loginUnLocked(settings)
