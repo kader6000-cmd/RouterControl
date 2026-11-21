@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -370,8 +374,40 @@ object Screens {
     @Composable
     fun DiagnosticsPage(vm: RouterViewModel) {
         val state by vm.state.collectAsState()
+        val clipboard = LocalClipboardManager.current
+        var copied by remember { mutableStateOf(false) }
+        val diagnosticReport = remember(state.diagnostics, state.settings.host, state.settings.parentalScript, state.message) {
+            buildString {
+                appendLine("RouterControl - تقرير التشخيص")
+                appendLine("الراوتر: ${state.settings.host}")
+                appendLine("عنوان التحكم الأبوي: ${state.settings.parentalScript.ifBlank { "غير مؤكد" }}")
+                state.message?.let { appendLine("الحالة: $it") }
+                appendLine("--------------------------------")
+                state.diagnostics.forEachIndexed { index, entry ->
+                    appendLine("${index + 1}. ${entry.label}")
+                    appendLine("النتيجة: ${if (entry.ok) "نجاح" else "فشل/غير مؤكد"}")
+                    appendLine(entry.detail)
+                    appendLine("--------------------------------")
+                }
+                if (state.diagnostics.isEmpty()) appendLine("لا توجد نتائج تشخيص بعد. اضغط فحص عنوان التحكم الأبوي أولاً.")
+            }
+        }
         Column(Modifier.fillMaxSize()) {
-            Text("التشخيص", color = Color.White, fontSize = 18.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("التشخيص", color = Color.White, fontSize = 18.sp)
+                OutlinedButton(onClick = {
+                    clipboard.setText(AnnotatedString(diagnosticReport))
+                    copied = true
+                }) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "نسخ التشخيص")
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (copied) "تم النسخ" else "نسخ التشخيص")
+                }
+            }
             Text(
                 "التشخيص يفحص صفحة الأجهزة والتحكم الأبوي، ويعرض كود initial_QueryAccessDeviceLink الذي تستخدمه واجهة الراوتر لجلب الأجهزة، حتى نحدد طلب API الحقيقي بدل تخمينه.",
                 color = Color.LightGray, fontSize = 13.sp
