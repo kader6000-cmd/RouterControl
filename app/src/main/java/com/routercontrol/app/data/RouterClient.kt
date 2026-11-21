@@ -307,7 +307,8 @@ class RouterClient {
                 val host = base(settings)
                 refererBase = host
                 var attempt = 0
-                while (true) {
+                var result: DeviceFetch? = null
+                while (result == null) {
                     // Context setup for the local-network view (zte_tracker: menuView localNetStatus).
                     try {
                         get("$host/?_type=menuView&_tag=localNetStatus&_=${nextGuid()}")
@@ -335,7 +336,8 @@ class RouterClient {
                         }
                     }
                     if (found.isNotEmpty()) {
-                        return@withContext DeviceFetch(found.values.sortedBy { it.name.lowercase(Locale.US) }, null)
+                        result = DeviceFetch(found.values.sortedBy { it.name.lowercase(Locale.US) }, null)
+                        break
                     }
                     // Empty result: was the session evicted? An evicted session
                     // fails as a SessionTimeout router error, not an HTTP error
@@ -347,21 +349,24 @@ class RouterClient {
                         attempt++
                         val relogin = loginUnLocked(settings)
                         if (relogin is RouterResult.Failure) {
-                            return@withContext DeviceFetch(emptyList(), relogin.message)
+                            result = DeviceFetch(emptyList(), relogin.message)
+                            break
                         }
                         continue
                     }
                     if (timedOut) {
-                        return@withContext DeviceFetch(
+                        result = DeviceFetch(
                             emptyList(),
                             "الروتر رفض الجلسة (SessionTimeout) — لو صفحة الروتر مفتوحة في المتصفح، اقفلها وحاول تاني من التطبيق"
                         )
+                        break
                     }
-                    return@withContext DeviceFetch(
+                    result = DeviceFetch(
                         emptyList(),
                         "الروتر رد بس من غير أجهزة — ممكن مفيش جهاز متصل دلوقتي، أو سوفت الروتر رد بشكل مختلف عن المتوقع (شوف صفحة التشخيص)"
                     )
                 }
+                result ?: DeviceFetch(emptyList(), "فشل جلب الأجهزة: نتيجة غير متوقعة")
             } catch (e: Exception) {
                 DeviceFetch(emptyList(), "فشل جلب الأجهزة: ${e.message ?: "خطأ غير معروف"}")
             }
