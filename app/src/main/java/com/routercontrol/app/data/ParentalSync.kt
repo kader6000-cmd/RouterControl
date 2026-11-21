@@ -205,6 +205,23 @@ object ParentalSync {
                 devices.error == null
             )
         )
+        // What the router's own device pages name, and what the last WLAN
+        // data reply actually said — the evidence for the right device tag (v1.4).
+        entries.add(
+            DiagnosticsEntry(
+                "عناوين الأجهزة من صفحة الروتر",
+                if (devices.debugTags.isEmpty()) "مفيش أسماء سكربتات ظاهرة في صفحة الأجهزة"
+                else devices.debugTags.joinToString("، "),
+                devices.debugTags.isNotEmpty()
+            )
+        )
+        entries.add(
+            DiagnosticsEntry(
+                "رد الأجهزة الخام",
+                if (devices.debugSnippet.isBlank()) "(مفيش رد)" else devices.debugSnippet,
+                devices.error == null
+            )
+        )
         // 1. Open the parental view; the HTML embeds _sessionTmpToken.
         val (viewCode, viewHtml) = client.rawGet(
             settings,
