@@ -64,7 +64,9 @@ data class DeviceFetch(
     /** Snippet of the last WLAN data reply (Diagnostics). */
     val debugSnippet: String = "",
     /** Result of loading the local-network view page (Diagnostics). */
-    val debugViewStatus: String = ""
+    val debugViewStatus: String = "",
+    /** Full URL fragments mentioning a data script in the router pages (Diagnostics). */
+    val debugDeviceUrls: List<String> = emptyList()
 )
 
 /** Result of a router call. `raw` is a short snippet of the router reply, for Diagnostics. */
