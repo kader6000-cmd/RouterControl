@@ -103,12 +103,16 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Block a device from Who's Online: toggle its rule, or create one if it has none. */
+    /** Block a device from Who's Online: enable its rule, or create one if it has none. */
     fun blockDevice(device: com.routercontrol.app.data.RouterDevice) {
         viewModelScope.launch {
             val existing = _state.value.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
             val settings = store.loadSettings()
             if (existing != null) {
+                if (existing.enabled) {
+                    _state.update { it.copy(message = "${existing.name} محظور أصلا") }
+                    return@launch
+                }
                 toggleRule(existing)
                 return@launch
             }
@@ -137,6 +141,18 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 )
             }
+        }
+    }
+
+    /** Allow a device from Who's Online: disable its rule if it is blocked. */
+    fun unblockDevice(device: com.routercontrol.app.data.RouterDevice) {
+        viewModelScope.launch {
+            val existing = _state.value.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
+            if (existing == null || !existing.enabled) {
+                _state.update { it.copy(message = "الجهاز مفتوح أصلا") }
+                return@launch
+            }
+            toggleRule(existing)
         }
     }
 
