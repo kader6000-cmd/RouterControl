@@ -58,7 +58,7 @@ object ParentalSync {
      * router's actual answer instead of guessing why it came back without SUCC.
      */
     @Volatile
-    var lastWriteDetail: String = 
+    var lastWriteDetail: String = ""
 
     /** ZTE's 2048-bit RSA public key for the Check header (from zte_tracker). */
     private const val ZTE_PUBLIC_KEY_PEM =
