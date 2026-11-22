@@ -568,42 +568,105 @@ object ParentalSync {
             tag = fetched.tag
             pageToken = fetched.pageToken
         }
-        val params = linkedMapOf<String, String>()
-        params["IF_ACTION"] = "Add"
-        params["Name"] = rule.name
-        // The web UI's real rule fields (v1.9.3, read from the router's own
-        // "Laptop" rule, DEV.PCUser7, in the 1.9.2 diagnostics): the MAC lives
-        // in ChildId (not UserIdentity), days are Week=127 (all 7 days, not
-        // the string "Everyday"), there is NO Action field stored at all, and
-        // a real rule carries FilterMode=NotAllowed, URLCnt=0, URL0..URL4="".
-        // The old UserIdentity/Action/Days Add was ACKed (SUCC) but created
-        // nothing — the router ignored the unknown fields.
-        params["ChildId"] = rule.mac.lowercase()
-        params["Enable"] = "1"
-        params["Week"] = "127"
-        params["StartHour"] = "0"
-        params["StartMin"] = "0"
-        params["EndHour"] = "23"
-        params["EndMin"] = "59"
-        params["FilterMode"] = "NotAllowed"
-        params["URLCnt"] = "0"
-        params["URL0"] = ""
-        params["URL1"] = ""
-        params["URL2"] = ""
-        params["URL3"] = ""
-        params["URL4"] = ""
-        params["_sessionTOKEN"] = pageToken ?: client.currentSessionToken() ?: ""
-        // Signed POST (v1.8.7): the plain rawPost "Add" came back HTTP 200 without
-        // SUCC, the same way the name-based "Apply" did — the router expects the
-        // Check header (RSA/plain/none, as in the proven toggle path) on writes.
-        val (code, body) = postToggle(client, settings, tag, params, pageToken)
-        lastWriteDetail = "إنشاء ${rule.name} (حظر جديد) — HTTP $code — " + snippet(body)
-        if (code == 200 && looksLikeSuccess(body)) {
-            return RouterResult.Success("تم إنشاء القاعدة على الروتر", snippet(body))
-        }
-        return RouterResult.Failure(
-            "الروتر مردّش بتأكيد على إنشاء القاعدة (HTTP $code) — اتحفظت محليا بس",
-            snippet(body)
+        // Add sweep (v1.9.4): the router ACKs every Add with SUCC yet creates
+        // nothing unless the exact fields match, so try the variants one by
+        // one and re-read the rule list after each — the first that creates a
+        // rule wins. Variants, in order:
+        //  1. ChildId as-is, Enable=1 (the 1.9.3 request — retries it in case
+        //     the test ran on 1.9.2)
+        //  2. + _InstID=DEV.PCUser{count+1} (the router may need the new
+        //     instance id assigned up front)
+        //  3. ChildId rotated, last byte first (the stored "Laptop" ChildId
+        //     64:d6:9a:26:67:27 is the device MAC D6:9A:26:67:27:64 rotated)
+        //  4. Enable=0 (the web UI creates rules disabled, then enables them
+        //     with a separate Apply — if this creates a disabled rule, the
+        //     sweep enables it with the proven toggle right away)
+        //  5. rotated ChildId + _InstID + Enable=0
+        val macLower = rule.mac.lowercase()
+        val macRotated = rotateMac(macLower)
+        val before = readRuleList(client, settings, tag)
+        val beforeCount = before?.size ?: 0
+        val nextInst = "DEV.PCUser${beforeCount + 1}"
+        val log = StringBuilder()
+        val variants = listOf(
+            "ChildId=$macLower, Enable=1" to mapOf("ChildId" to macLower, "Enable" to "1"),
+            "ChildId=$macLower, Enable=1, _InstID=$nextInst" to mapOf("ChildId" to macLower, "Enable" to "1", "_InstID" to nextInst),
+            "ChildId=$macRotated, Enable=1" to mapOf("ChildId" to macRotated, "Enable" to "1"),
+            "ChildId=$macLower, Enable=0" to mapOf("ChildId" to macLower, "Enable" to "0"),
+            "ChildId=$macRotated, Enable=0, _InstID=$nextInst" to mapOf("ChildId" to macRotated, "Enable" to "0", "_InstID" to nextInst)
         )
+        for ((label, extra) in variants) {
+            val params = linkedMapOf<String, String>()
+            params["IF_ACTION"] = "Add"
+            params["Name"] = rule.name
+            params["Week"] = "127"
+            params["StartHour"] = "0"
+            params["StartMin"] = "0"
+            params["EndHour"] = "23"
+            params["EndMin"] = "59"
+            params["FilterMode"] = "NotAllowed"
+            params["URLCnt"] = "0"
+            params["URL0"] = ""
+            params["URL1"] = ""
+            params["URL2"] = ""
+            params["URL3"] = ""
+            params["URL4"] = ""
+            params.putAll(extra)
+            params["_sessionTOKEN"] = pageToken ?: client.currentSessionToken() ?: ""
+            // Signed POST (v1.8.7): the router expects the Check header
+            // (RSA/plain/none, as in the proven toggle path) on writes.
+            val (code, body) = postToggle(client, settings, tag, params, pageToken)
+            log.append("$label — HTTP $code — ${snippet(body)}\n")
+            val after = readRuleList(client, settings, tag)
+            val created = after?.firstOrNull { it.name == rule.name }
+            if (created != null || (before != null && after != null && after.size > before.size)) {
+                val newRule = created ?: after?.lastOrNull()
+                // If the winning variant created the rule disabled, enable it
+                // right away with the proven instance toggle.
+                if (newRule != null && !newRule.enabled && newRule.instanceId.isNotBlank()) {
+                    val toggleParams = linkedMapOf(
+                        "IF_ACTION" to "Apply",
+                        "Enable" to "1",
+                        "_InstID" to newRule.instanceId,
+                        "_sessionTOKEN" to (pageToken ?: client.currentSessionToken() ?: "")
+                    )
+                    val (tCode, tBody) = postToggle(client, settings, tag, toggleParams, pageToken)
+                    log.append("تفعيل بعد الإنشاء — HTTP $tCode — ${snippet(tBody)}\n")
+                }
+                lastWriteDetail = "إنشاء ${rule.name} (حظر جديد) — نجح في: $label\n" + log.toString().take(1200)
+                return RouterResult.Success("تم إنشاء القاعدة على الروتر ($label)", log.toString().take(500))
+            }
+        }
+        lastWriteDetail = "إنشاء ${rule.name} (حظر جديد) — كل المحاولات فشلت\n" + log.toString().take(1200)
+        return RouterResult.Failure(
+            "الروتر مردّش بتأكيد على إنشاء القاعدة — جرّبت 5 صيغ للإضافة و ولا واحدة أنشأت قاعدة — اتحفظت محليا بس",
+            log.toString().take(500)
+        )
+    }
+
+    /**
+     * Lightweight re-read of the parental data script (one rawGet, no view
+     * fetch, no device fetch): used by the Add sweep to see whether a new
+     * rule actually appeared after each attempt. Null when the reply is not
+     * a clean SUCC (e.g. SessionTimeout).
+     */
+    private suspend fun readRuleList(
+        client: RouterClient,
+        settings: RouterSettings,
+        tag: String
+    ): List<ParentalRule>? {
+        val (code, body) = client.rawGet(
+            settings,
+            "?_type=menuData&_tag=$tag&_=${System.currentTimeMillis()}"
+        )
+        if (code == 200 && looksLikeSuccess(body) && !body.contains("SessionTimeout")) {
+            return parseInstances(body).mapNotNull { fieldsToRule(it) }
+        }
+        return null
+    }
+
+    private fun rotateMac(mac: String): String {
+        val parts = mac.split(":")
+        return if (parts.size == 6) (listOf(parts.last()) + parts.dropLast(1)).joinToString(":") else mac
     }
 }
