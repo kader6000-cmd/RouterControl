@@ -135,9 +135,22 @@ object Screens {
                                     )
                                     Text(device.mac, color = Color(0xFF9DB8DC), fontSize = 12.sp)
                                     if (linked != null) {
+                                        // A rule the router never confirmed (pendingSync) is
+                                        // only blocked locally — say so, and let the user
+                                        // retry Block instead of showing a red "blocked".
+                                        val stateText = when {
+                                            linked.enabled && linked.pendingSync -> "محظور محليا بس — الروتر مأكدش، دوس حظر تاني"
+                                            linked.enabled -> "محظور"
+                                            else -> "مفتوح"
+                                        }
+                                        val stateColor = when {
+                                            linked.enabled && linked.pendingSync -> Color(0xFFFF9500)
+                                            linked.enabled -> Color(0xFFFF5252)
+                                            else -> Color(0xFF00E676)
+                                        }
                                         Text(
-                                            "مربوط بقاعدة: ${linked.name} — ${if (linked.enabled) "محظور" else "مفتوح"}",
-                                            color = if (linked.enabled) Color(0xFFFF5252) else Color(0xFF00E676),
+                                            "مربوط بقاعدة: ${linked.name} — $stateText",
+                                            color = stateColor,
                                             fontSize = 12.sp
                                         )
                                     }
@@ -145,7 +158,11 @@ object Screens {
                                 Column(horizontalAlignment = Alignment.End) {
                                     Button(
                                         onClick = { vm.blockDevice(device) },
-                                        enabled = linked == null || !linked.enabled,
+                                        // Keep Block enabled while the rule is only
+                                        // blocked locally (pendingSync): the router
+                                        // never confirmed it, so the user must be
+                                        // able to retry from this page.
+                                        enabled = linked == null || !linked.enabled || linked.pendingSync,
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))
                                     ) { Text("حظر") }
                                     Spacer(Modifier.height(6.dp))
