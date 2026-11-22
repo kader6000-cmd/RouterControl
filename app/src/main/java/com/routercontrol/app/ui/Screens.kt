@@ -136,14 +136,24 @@ object Screens {
                                     if (linked != null) {
                                         Text(
                                             "مربوط بقاعدة: ${linked.name} — ${if (linked.enabled) "محظور" else "مفتوح"}",
-                                            color = Color(0xFF90CAF9), fontSize = 12.sp
+                                            color = if (linked.enabled) Color(0xFFEF5350) else Color(0xFF66BB6A),
+                                            fontSize = 12.sp
                                         )
                                     }
                                 }
-                                Button(
-                                    onClick = { vm.blockDevice(device) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
-                                ) { Text("حظر") }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Button(
+                                        onClick = { vm.blockDevice(device) },
+                                        enabled = linked == null || !linked.enabled,
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                                    ) { Text("حظر") }
+                                    Spacer(Modifier.height(6.dp))
+                                    Button(
+                                        onClick = { vm.unblockDevice(device) },
+                                        enabled = linked?.enabled == true,
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                                    ) { Text("سماح") }
+                                }
                             }
                             Spacer(Modifier.height(6.dp))
                             TextButton(onClick = { linkDevice = device }) {
