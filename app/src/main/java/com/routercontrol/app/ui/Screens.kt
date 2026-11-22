@@ -16,6 +16,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.routercontrol.app.BuildConfig
 import com.routercontrol.app.data.RouterDevice
 import com.routercontrol.app.data.RuleSchedule
 import kotlinx.coroutines.launch
@@ -389,6 +390,7 @@ object Screens {
         val diagnosticReport = remember(state.diagnostics, state.settings.host, state.settings.parentalScript, state.message) {
             buildString {
                 appendLine("RouterControl - تقرير التشخيص")
+                appendLine("الإصدار: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
                 appendLine("الراوتر: ${state.settings.host}")
                 appendLine("عنوان التحكم الأبوي: ${state.settings.parentalScript.ifBlank { "غير مؤكد" }}")
                 state.message?.let { appendLine("الحالة: $it") }
