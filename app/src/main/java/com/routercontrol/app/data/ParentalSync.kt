@@ -52,6 +52,14 @@ object ParentalSync {
 
     private const val VIEW_TAG = "parentCtrl&Menu3Location=0"
 
+    /**
+     * Last write attempt (toggle / Add) — HTTP code + the router's reply snippet.
+     * Shown in Diagnostics (v1.8.8) so a failed Block can be debugged from the
+     * router's actual answer instead of guessing why it came back without SUCC.
+     */
+    @Volatile
+    var lastWriteDetail: String = 
+
     /** ZTE's 2048-bit RSA public key for the Check header (from zte_tracker). */
     private const val ZTE_PUBLIC_KEY_PEM =
         "-----BEGIN PUBLIC KEY-----\n" +
@@ -325,6 +333,14 @@ object ParentalSync {
             if (attemptOk) break
         }
         entries.addAll(parentalEntries)
+        entries.add(
+            DiagnosticsEntry(
+                "آخر محاولة كتابة (حظر/فتح)",
+                if (lastWriteDetail.isBlank()) "لسه مفيش محاولة كتابة في الجلسة دي — دوس حظر على جهاز وبعدين انسخ التقرير"
+                else lastWriteDetail,
+                lastWriteDetail.isNotBlank() && !lastWriteDetail.contains("SessionTimeout")
+            )
+        )
         return FetchedRules(foundRules, foundTag, foundToken, entries)
     }
 
@@ -431,6 +447,7 @@ object ParentalSync {
                 "_sessionTOKEN" to (pageToken ?: client.currentSessionToken() ?: "")
             )
             val (code, body) = postToggle(client, settings, tag, params, pageToken)
+            lastWriteDetail = "تعديل ${rule.name} (${if (enabled) "حظر" else "سماح"}) — HTTP $code — " + snippet(body)
             if (code == 200 && looksLikeSuccess(body)) {
                 return RouterResult.Success("تم تطبيق القاعدة على الروتر", snippet(body))
             }
@@ -510,6 +527,7 @@ object ParentalSync {
         // SUCC, the same way the name-based "Apply" did — the router expects the
         // Check header (RSA/plain/none, as in the proven toggle path) on writes.
         val (code, body) = postToggle(client, settings, tag, params, pageToken)
+        lastWriteDetail = "إنشاء ${rule.name} (حظر جديد) — HTTP $code — " + snippet(body)
         if (code == 200 && looksLikeSuccess(body)) {
             return RouterResult.Success("تم إنشاء القاعدة على الروتر", snippet(body))
         }
