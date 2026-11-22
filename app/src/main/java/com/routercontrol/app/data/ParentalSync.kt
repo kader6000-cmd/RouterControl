@@ -465,11 +465,16 @@ object ParentalSync {
         // A rule with no instance id was never created on the router (local-only):
         // "Apply" cannot work for it — the router has no instance to apply to,
         // so the name-based Apply POST comes back HTTP 200 without SUCC.
-        // Enabling it means CREATING it (v1.8.7); disabling it is a local no-op
-        // because there is nothing on the router to turn off.
+        // Enabling it means CREATING it (v1.8.7). Disabling it must NOT report
+        // Success: nothing was sent to the router, so "opened" would be a fake
+        // confirmation (v1.9.7) — report the honest failure instead; the caller
+        // (toggleRule) deletes the stale local rule for this case.
         if (rule.instanceId.isBlank()) {
             return if (enabled) createRule(client, settings, rule)
-            else RouterResult.Success("القاعدة دي مش موجودة على الروتر أصلا — اتفتحت محليا بس", "")
+            else RouterResult.Failure(
+                "القاعدة دي مش موجودة على الروتر أصلا — مفيش حاجة تتفتح",
+                ""
+            )
         }
         val tag: String
         var pageToken: String? = null
