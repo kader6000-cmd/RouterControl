@@ -80,6 +80,23 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleRule(rule: ParentalRule) {
         viewModelScope.launch {
             val target = !rule.enabled
+            // Disabling a rule the router never confirmed (local-only, failed
+            // create — blank instance id + pendingSync): there is nothing on
+            // the router to turn off, so delete the stale local rule instead
+            // of faking a successful "open" — the next Block then starts fresh.
+            // Seeded rules before the first sync are NOT deleted: they have
+            // pendingSync=false, so this branch only fires for failed creates.
+            if (!target && rule.instanceId.isBlank() && rule.pendingSync) {
+                val updated = _state.value.rules.filter { it.name != rule.name }
+                store.saveRules(updated)
+                _state.update {
+                    it.copy(
+                        rules = updated,
+                        message = "اتمسحت القاعدة المحلية ${rule.name} — مفيش حاجة على الروتر تتفتح، ودوس حظر من جديد لو عاوز تحظر"
+                    )
+                }
+                return@launch
+            }
             val updated = _state.value.rules.map {
                 if (it.name == rule.name) it.copy(enabled = target, pendingSync = true) else it
             }
@@ -109,6 +126,13 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
             val existing = _state.value.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
             val settings = store.loadSettings()
             if (existing != null) {
+                // A rule that is enabled but pendingSync was never confirmed by
+                // the router (v1.9.7): the device is still online, so retry the
+                // block instead of saying "already blocked".
+                if (existing.enabled && existing.pendingSync) {
+                    retryBlock(existing)
+                    return@launch
+                }
                 if (existing.enabled) {
                     _state.update { it.copy(message = "${existing.name} محظور أصلا") }
                     return@launch
@@ -137,6 +161,31 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
                     rules = final,
                     message = when (res) {
                         is RouterResult.Success -> "تم حظر $name"
+                        is RouterResult.Failure -> res.message
+                    }
+                )
+            }
+        }
+    }
+
+    /** Retry blocking a rule the router never confirmed (enabled + pendingSync):
+     *  re-applies Enable=true on the router WITHOUT flipping local state —
+     *  toggleRule would flip it to disabled, which is the opposite of Block.
+     *  applyRule routes a blank instance id to createRule (the Add sweep) and
+     *  an existing instance id to the instance toggle, so both shapes retry. */
+    fun retryBlock(rule: ParentalRule) {
+        viewModelScope.launch {
+            val settings = store.loadSettings()
+            val res = ParentalSync.applyRule(client, settings, rule, true)
+            val final = _state.value.rules.map {
+                if (it.name == rule.name) it.copy(pendingSync = res is RouterResult.Failure) else it
+            }
+            store.saveRules(final)
+            _state.update {
+                it.copy(
+                    rules = final,
+                    message = when (res) {
+                        is RouterResult.Success -> "تم حظر ${rule.name}"
                         is RouterResult.Failure -> res.message
                     }
                 )
