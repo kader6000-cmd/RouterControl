@@ -200,7 +200,7 @@ object ParentalSync {
         val enabled = enable.trim().lowercase() in setOf("1", "true", "yes", "on")
         val name = (fields["Name"] ?: fields["UserName"] ?: fields["PCName"] ?: fields["Alias"] ?: instId)
             .trim().ifBlank { instId }
-        val mac = (fields["UserIdentity"] ?: fields["MACAddress"] ?: fields["Mac"] ?: fields["DeviceMac"] ?: "")
+        val mac = (fields["ChildId"] ?: fields["UserIdentity"] ?: fields["MACAddress"] ?: fields["Mac"] ?: fields["DeviceMac"] ?: "")
             .trim().uppercase()
         return ParentalRule(
             name = name,
@@ -571,14 +571,27 @@ object ParentalSync {
         val params = linkedMapOf<String, String>()
         params["IF_ACTION"] = "Add"
         params["Name"] = rule.name
-        params["UserIdentity"] = rule.mac
+        // The web UI's real rule fields (v1.9.3, read from the router's own
+        // "Laptop" rule, DEV.PCUser7, in the 1.9.2 diagnostics): the MAC lives
+        // in ChildId (not UserIdentity), days are Week=127 (all 7 days, not
+        // the string "Everyday"), there is NO Action field stored at all, and
+        // a real rule carries FilterMode=NotAllowed, URLCnt=0, URL0..URL4="".
+        // The old UserIdentity/Action/Days Add was ACKed (SUCC) but created
+        // nothing — the router ignored the unknown fields.
+        params["ChildId"] = rule.mac.lowercase()
         params["Enable"] = "1"
-        params["Action"] = rule.action
-        params["Days"] = "Everyday"
+        params["Week"] = "127"
         params["StartHour"] = "0"
         params["StartMin"] = "0"
         params["EndHour"] = "23"
         params["EndMin"] = "59"
+        params["FilterMode"] = "NotAllowed"
+        params["URLCnt"] = "0"
+        params["URL0"] = ""
+        params["URL1"] = ""
+        params["URL2"] = ""
+        params["URL3"] = ""
+        params["URL4"] = ""
         params["_sessionTOKEN"] = pageToken ?: client.currentSessionToken() ?: ""
         // Signed POST (v1.8.7): the plain rawPost "Add" came back HTTP 200 without
         // SUCC, the same way the name-based "Apply" did — the router expects the
