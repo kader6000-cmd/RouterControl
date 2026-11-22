@@ -332,6 +332,19 @@ object ParentalSync {
                     viewHtml.contains("addInst") || viewHtml.contains("IF_ACTION")
                 )
             )
+            // The JS function that builds the Add POST (v1.9.2): the ready-block
+            // above only CALLS initial_addInstLink — the definition holds the
+            // actual field names the Add form submits.
+            attemptEntries.add(
+                DiagnosticsEntry(
+                    "دالة إضافة قاعدة (JS)",
+                    snippetAround(
+                        viewHtml,
+                        listOf("function initial_addInstLink", "initial_addInstLink=function", "UserIdentity")
+                    ),
+                    viewHtml.contains("initial_addInstLink") || viewHtml.contains("UserIdentity")
+                )
+            )
             // 2. Try each data script.
             var attemptOk = false
             for (script in candidates) {
@@ -356,6 +369,16 @@ object ParentalSync {
                     )
                 )
                 if (ok && rules.isNotEmpty()) {
+                    // The last instance in the reply (v1.9.2): a rule created from
+                    // the web UI ("Laptop") shows exactly what fields a real Add
+                    // must produce — UserIdentity, Action, Days, Enable.
+                    attemptEntries.add(
+                        DiagnosticsEntry(
+                            "آخر قاعدة في الرد (XML)",
+                            body.takeLast(1500),
+                            true
+                        )
+                    )
                     foundRules = rules
                     foundTag = script
                     foundToken = attemptToken
