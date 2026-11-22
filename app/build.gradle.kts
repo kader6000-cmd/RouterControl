@@ -11,8 +11,8 @@ android {
         applicationId = "com.routercontrol.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "1.9.4"
+        versionCode = 29
+        versionName = "1.9.5"
     }
     buildTypes {
         release {
@@ -21,7 +21,12 @@ android {
             isMinifyEnabled = false
         }
     }
-    buildFeatures { compose = true }
+    // BuildConfig is generated only when enabled (AGP 8 default is off);
+    // Screens.kt reads BuildConfig.VERSION_NAME for the Diagnostics header.
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
