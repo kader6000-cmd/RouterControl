@@ -873,28 +873,65 @@ class RouterClient {
             val factory = DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = false
             val doc = factory.newDocumentBuilder().parse(xml.byteInputStream(Charsets.UTF_8))
-            val nodes = doc.getElementsByTagName(elementName)
-            for (i in 0 until nodes.length) {
-                val el = nodes.item(i) as? Element ?: continue
-                fun tag(name: String): String {
+            val containers = doc.getElementsByTagName(elementName)
+            for (containerIndex in 0 until containers.length) {
+                val container = containers.item(containerIndex) as? Element ?: continue
+                fun tag(el: Element, name: String): String {
                     val list = el.getElementsByTagName(name)
                     if (list.length == 0) return ""
                     return list.item(0)?.textContent?.trim() ?: ""
                 }
-                val mac = tag("MACAddress").uppercase(Locale.US)
-                if (mac.isBlank()) continue
-                val name = tag("HostName").ifBlank { mac }
-                out.add(
-                    RouterDevice(
-                        name = name,
-                        mac = mac,
-                        ip = tag("IPAddress"),
-                        ipv6 = tag("IPV6Address"),
-                        networkType = networkType,
-                        linkTimeSeconds = tag("LinkTime").toLongOrNull() ?: 0L,
-                        active = true
+                val instances = container.getElementsByTagName("Instance")
+                if (instances.length == 0) {
+                    // No <Instance> wrapper: direct tags under the container.
+                    val mac = tag(container, "MACAddress").uppercase(Locale.US)
+                    if (mac.isBlank()) continue
+                    out.add(
+                        RouterDevice(
+                            name = tag(container, "HostName").ifBlank { mac },
+                            mac = mac,
+                            ip = tag(container, "IPAddress"),
+                            ipv6 = tag(container, "IPV6Address"),
+                            networkType = networkType,
+                            linkTimeSeconds = tag(container, "LinkTime").toLongOrNull() ?: 0L,
+                            active = true
+                        )
                     )
-                )
+                    continue
+                }
+                for (instanceIndex in 0 until instances.length) {
+                    val instance = instances.item(instanceIndex) as? Element ?: continue
+                    // ZTE H288A serializes object properties as alternating
+                    // <ParaName>MACAddress</ParaName><ParaValue>...</ParaValue>
+                    // pairs, not as literal <MACAddress> elements — the same
+                    // shape the parental data uses (v1.3). Fall back to direct
+                    // tags inside the instance when a pair is missing.
+                    val names = instance.getElementsByTagName("ParaName")
+                    val values = instance.getElementsByTagName("ParaValue")
+                    val fields = linkedMapOf<String, String>()
+                    val count = minOf(names.length, values.length)
+                    for (index in 0 until count) {
+                        val key = names.item(index)?.textContent?.trim().orEmpty()
+                        val value = values.item(index)?.textContent?.trim().orEmpty()
+                        if (key.isNotBlank()) fields[key] = value
+                    }
+                    fun field(name: String): String =
+                        fields[name].orEmpty().ifBlank { tag(instance, name) }
+                    val mac = field("MACAddress").uppercase(Locale.US)
+                    if (mac.isBlank()) continue
+                    val name = field("HostName").ifBlank { mac }
+                    out.add(
+                        RouterDevice(
+                            name = name,
+                            mac = mac,
+                            ip = field("IPAddress"),
+                            ipv6 = field("IPV6Address"),
+                            networkType = networkType,
+                            linkTimeSeconds = field("LinkTime").toLongOrNull() ?: 0L,
+                            active = true
+                        )
+                    )
+                }
             }
         } catch (e: Exception) {
             // Malformed XML from the router: return whatever was parsed so far.
