@@ -389,6 +389,15 @@ object ParentalSync {
         // posted on the stale session comes back HTTP 200 without SUCC.
         val fresh = client.login(settings)
         if (fresh is RouterResult.Failure) return fresh
+        // A rule with no instance id was never created on the router (local-only):
+        // "Apply" cannot work for it — the router has no instance to apply to,
+        // so the name-based Apply POST comes back HTTP 200 without SUCC.
+        // Enabling it means CREATING it (v1.8.7); disabling it is a local no-op
+        // because there is nothing on the router to turn off.
+        if (rule.instanceId.isBlank()) {
+            return if (enabled) createRule(client, settings, rule)
+            else RouterResult.Success("القاعدة دي مش موجودة على الروتر أصلا — اتفتحت محليا بس", "")
+        }
         val tag: String
         var pageToken: String? = null
         if (settings.parentalScript.isNotBlank()) {
@@ -464,8 +473,16 @@ object ParentalSync {
         // Fresh admin session for the write (v1.8.6, same reason as applyRule).
         val fresh = client.login(settings)
         if (fresh is RouterResult.Failure) return fresh
-        val tag = if (settings.parentalScript.isNotBlank()) {
-            settings.parentalScript
+        val tag: String
+        var pageToken: String? = null
+        if (settings.parentalScript.isNotBlank()) {
+            tag = settings.parentalScript
+            // Fresh page token for the write.
+            val (_, viewHtml) = client.rawGet(
+                settings,
+                "?_type=menuView&_tag=$VIEW_TAG&_=${System.currentTimeMillis()}"
+            )
+            pageToken = extractPageToken(viewHtml)
         } else {
             val fetched = fetchRules(client, settings)
             if (fetched.tag.isBlank()) {
@@ -474,11 +491,8 @@ object ParentalSync {
                     fetched.entries.joinToString("\n") { "${it.label}: ${it.detail}" }.take(500)
                 )
             }
-            fetched.tag
-        }
-        if (!client.isLoggedIn()) {
-            val login = client.login(settings)
-            if (login is RouterResult.Failure) return login
+            tag = fetched.tag
+            pageToken = fetched.pageToken
         }
         val params = linkedMapOf<String, String>()
         params["IF_ACTION"] = "Add"
@@ -491,7 +505,11 @@ object ParentalSync {
         params["StartMin"] = "0"
         params["EndHour"] = "23"
         params["EndMin"] = "59"
-        val (code, body) = client.rawPost(settings, "?_type=menuData&_tag=$tag", params)
+        params["_sessionTOKEN"] = pageToken ?: client.currentSessionToken() ?: ""
+        // Signed POST (v1.8.7): the plain rawPost "Add" came back HTTP 200 without
+        // SUCC, the same way the name-based "Apply" did — the router expects the
+        // Check header (RSA/plain/none, as in the proven toggle path) on writes.
+        val (code, body) = postToggle(client, settings, tag, params, pageToken)
         if (code == 200 && looksLikeSuccess(body)) {
             return RouterResult.Success("تم إنشاء القاعدة على الروتر", snippet(body))
         }
