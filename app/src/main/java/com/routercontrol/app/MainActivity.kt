@@ -21,9 +21,12 @@ import com.routercontrol.app.ui.RouterViewModel
 import com.routercontrol.app.ui.Screens
 import kotlinx.coroutines.launch
 
-private val Black = Color(0xFF101010)
-private val Gold = Color(0xFFD6AD45)
-private val Panel = Color(0xFF242424)
+// Bright vivid theme (v1.9.6): deep navy background, vivid cyan primary,
+// bright orange secondary, royal-blue panels — replaces the old gold/black.
+private val Navy = Color(0xFF0A1B33)
+private val Cyan = Color(0xFF00C8FF)
+private val Orange = Color(0xFFFF9500)
+private val Panel = Color(0xFF17407E)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,7 +36,7 @@ class MainActivity : ComponentActivity() {
             val state by vm.state.collectAsState()
             var unlocked by remember { mutableStateOf(false) }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                MaterialTheme(colorScheme = darkColorScheme(primary = Gold, background = Black, surface = Panel)) {
+                MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Orange, tertiary = Color(0xFFB388FF), background = Navy, surface = Panel, onPrimary = Color(0xFF00222E), onSecondary = Color(0xFF2A1500))) {
                     if (state.pinSet && !unlocked) {
                         PinScreen(vm) { unlocked = true }
                     } else {
@@ -55,14 +58,14 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
         isSetup = !vm.isPinSet()
     }
     Column(
-        Modifier.fillMaxSize().background(Black).padding(24.dp),
+        Modifier.fillMaxSize().background(Navy).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(if (isSetup) "عيّن رقم سري للتطبيق" else "اكتب الرقم السري", color = Gold, fontSize = 22.sp)
+        Text(if (isSetup) "عيّن رقم سري للتطبيق" else "اكتب الرقم السري", color = Cyan, fontSize = 22.sp)
         Text(
             "4 أرقام — عشان العيال ما يفتحوش التطبيق ويفكّوا الحظر بنفسهم",
-            color = Color.LightGray, fontSize = 14.sp
+            color = Color(0xFFDCE8FA), fontSize = 14.sp
         )
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(
@@ -100,7 +103,7 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(
             "لو نسيت الرقم: امسح بيانات التطبيق من إعدادات الموبايل (هيتمسح معاها إعدادات الروتر المحفوظة).",
-            color = Color.Gray, fontSize = 12.sp
+            color = Color(0xFF9DB8DC), fontSize = 12.sp
         )
     }
 }
@@ -109,8 +112,8 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
 private fun AppShell(vm: RouterViewModel) {
     val state by vm.state.collectAsState()
     var page by remember { mutableStateOf("rules") }
-    Column(Modifier.fillMaxSize().background(Black).padding(16.dp)) {
-        Text("التحكم في الروتر", color = Gold, fontSize = 25.sp)
+    Column(Modifier.fillMaxSize().background(Navy).padding(16.dp)) {
+        Text("التحكم في الروتر", color = Cyan, fontSize = 25.sp)
         Text("ZTE H288A — 192.168.1.1", color = Color.White, fontSize = 14.sp)
         if (state.message != null) {
             Spacer(Modifier.height(8.dp))
@@ -126,7 +129,7 @@ private fun AppShell(vm: RouterViewModel) {
                 "diag" to "التشخيص"
             ).forEach { (key, label) ->
                 TextButton(onClick = { page = key }) {
-                    Text(label, color = if (page == key) Gold else Color.LightGray, fontSize = 11.sp)
+                    Text(label, color = if (page == key) Cyan else Color(0xFFDCE8FA), fontSize = 11.sp)
                 }
             }
         }
