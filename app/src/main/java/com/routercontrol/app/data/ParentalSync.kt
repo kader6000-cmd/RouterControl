@@ -91,6 +91,27 @@ object ParentalSync {
 
     private fun snippet(body: String): String = body.take(300)
 
+    /**
+     * Window of [html] around the first occurrence of any of [keywords]
+     * (v1.9.0): the parentCtrl view HTML holds the web UI's Add form (field
+     * names + values) — the Add POST returns SUCC yet creates no rule, so the
+     * form is the evidence for the field the Add is missing.
+     */
+    private fun snippetAround(html: String, keywords: List<String>, radius: Int = 900): String {
+        var idx = -1
+        for (kw in keywords) {
+            val i = html.indexOf(kw)
+            if (i >= 0) {
+                idx = i
+                break
+            }
+        }
+        if (idx < 0) return "(مفيش نموذج إضافة ظاهر في الصفحة)"
+        val start = maxOf(0, idx - 200)
+        val end = minOf(html.length, idx + radius)
+        return html.substring(start, end)
+    }
+
     private fun sha256Hex(text: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }
@@ -296,6 +317,19 @@ object ParentalSync {
                     if (viewTags.isEmpty()) "مفيش أسماء سكربتات ظاهرة في الصفحة — هنجرّب العناوين المعروفة بس"
                     else viewTags.joinToString("، "),
                     viewTags.isNotEmpty()
+                )
+            )
+            // The Add form itself, from the router's own page (v1.9.0): the Add
+            // POST returns SUCC yet no 7th rule appears, so the web UI's form
+            // holds the field (or value) the Add is missing.
+            attemptEntries.add(
+                DiagnosticsEntry(
+                    "نموذج إضافة قاعدة (من صفحة الروتر)",
+                    snippetAround(
+                        viewHtml,
+                        listOf("addInst", "IF_ACTION", "AddNew", "Create New Item")
+                    ),
+                    viewHtml.contains("addInst") || viewHtml.contains("IF_ACTION")
                 )
             )
             // 2. Try each data script.
