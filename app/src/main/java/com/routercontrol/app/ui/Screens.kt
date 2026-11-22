@@ -42,13 +42,13 @@ object Screens {
                 Button(onClick = { vm.refreshAll() }) { Text("تحديث") }
                 Button(
                     onClick = { vm.blockAll() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))
                 ) { Text("اقفل الكل (وضع النوم)") }
             }
             Spacer(Modifier.height(8.dp))
             Text(
                 "On = القاعدة شغالة = الجهاز محظور طول اليوم. Off = الجهاز مفتوح.",
-                color = Color.LightGray, fontSize = 13.sp
+                color = Color(0xFFDCE8FA), fontSize = 13.sp
             )
             Text(
                 "لو ظهرت علامة (لم يؤكد الروتر) جنب قاعدة، يبقى التغيير اتحفظ محليا بس — شوف صفحة التشخيص.",
@@ -60,7 +60,7 @@ object Screens {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.rules, key = { it.name }) { rule ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF242424))) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17407E))) {
                         Column(Modifier.padding(12.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -72,7 +72,7 @@ object Screens {
                                     Text(
                                         if (rule.mac.isBlank()) "مش مربوط بجهاز — اربطه من صفحة مين أونلاين"
                                         else "MAC: ${rule.mac}",
-                                        color = Color.LightGray, fontSize = 12.sp
+                                        color = Color(0xFFDCE8FA), fontSize = 12.sp
                                     )
                                     if (rule.pendingSync) {
                                         Text("لم يؤكد الروتر بعد", color = Color(0xFFFFB74D), fontSize = 12.sp)
@@ -86,11 +86,11 @@ object Screens {
                             if (!rule.enabled) {
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("افتح مؤقتا:", color = Color.LightGray, fontSize = 13.sp)
+                                    Text("افتح مؤقتا:", color = Color(0xFFDCE8FA), fontSize = 13.sp)
                                     Button(onClick = { vm.openTemporarily(rule, 30) }) { Text("30 دقيقة") }
                                     Button(onClick = { vm.openTemporarily(rule, 60) }) { Text("ساعة") }
                                 }
-                                Text("هيتقفل لوحده بعد ما الوقت يخلص.", color = Color.Gray, fontSize = 12.sp)
+                                Text("هيتقفل لوحده بعد ما الوقت يخلص.", color = Color(0xFF9DB8DC), fontSize = 12.sp)
                             }
                         }
                     }
@@ -110,17 +110,17 @@ object Screens {
             Spacer(Modifier.height(8.dp))
             Text(
                 "الأجهزة المتصلة دلوقتي بالروتر (واي فاي + سلك). دوس حظر على أي جهاز، ولو ليه قاعدة هيتقلب زرارها، ولو جديد هيتعمل له قاعدة حظر جديدة.",
-                color = Color.LightGray, fontSize = 13.sp
+                color = Color(0xFFDCE8FA), fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
             if (state.loading) CircularProgressIndicator()
             if (state.devices.isEmpty() && !state.loading) {
-                Text("مفيش أجهزة ظاهرة — دوس تحديث، واتأكد إنك متصل بواي فاي البيت.", color = Color.LightGray)
+                Text("مفيش أجهزة ظاهرة — دوس تحديث، واتأكد إنك متصل بواي فاي البيت.", color = Color(0xFFDCE8FA))
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.devices, key = { it.mac }) { device ->
                     val linked = state.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF242424))) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17407E))) {
                         Column(Modifier.padding(12.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -131,13 +131,13 @@ object Screens {
                                     Text(device.name, color = Color.White, fontSize = 16.sp)
                                     Text(
                                         "${device.networkType} — ${device.ip.ifBlank { "من غير IP" }}",
-                                        color = Color.LightGray, fontSize = 12.sp
+                                        color = Color(0xFFDCE8FA), fontSize = 12.sp
                                     )
-                                    Text(device.mac, color = Color.Gray, fontSize = 12.sp)
+                                    Text(device.mac, color = Color(0xFF9DB8DC), fontSize = 12.sp)
                                     if (linked != null) {
                                         Text(
                                             "مربوط بقاعدة: ${linked.name} — ${if (linked.enabled) "محظور" else "مفتوح"}",
-                                            color = if (linked.enabled) Color(0xFFEF5350) else Color(0xFF66BB6A),
+                                            color = if (linked.enabled) Color(0xFFFF5252) else Color(0xFF00E676),
                                             fontSize = 12.sp
                                         )
                                     }
@@ -146,19 +146,19 @@ object Screens {
                                     Button(
                                         onClick = { vm.blockDevice(device) },
                                         enabled = linked == null || !linked.enabled,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))
                                     ) { Text("حظر") }
                                     Spacer(Modifier.height(6.dp))
                                     Button(
                                         onClick = { vm.unblockDevice(device) },
                                         enabled = linked?.enabled == true,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
                                     ) { Text("سماح") }
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
                             TextButton(onClick = { linkDevice = device }) {
-                                Text("ربط الجهاز ده بقاعدة موجودة", color = Color(0xFFD6AD45), fontSize = 12.sp)
+                                Text("ربط الجهاز ده بقاعدة موجودة", color = Color(0xFF00C8FF), fontSize = 12.sp)
                             }
                         }
                     }
@@ -202,7 +202,7 @@ object Screens {
             Text("جدولة الحظر التلقائي", color = Color.White, fontSize = 18.sp)
             Text(
                 "مثال: اقفل جهاز أحمد كل يوم من 11 بالليل لـ 7 الصبح. الجدولة بتتنفذ من التطبيق كل ربع ساعة وانت على واي فاي البيت.",
-                color = Color.LightGray, fontSize = 13.sp
+                color = Color(0xFFDCE8FA), fontSize = 13.sp
             )
             Spacer(Modifier.height(12.dp))
             Text("القاعدة:", color = Color.White)
@@ -266,7 +266,7 @@ object Screens {
             Text("الجداول المحفوظة:", color = Color.White, fontSize = 16.sp)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.schedules, key = { it.ruleName }) { s ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF242424))) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17407E))) {
                         Row(
                             Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -333,7 +333,7 @@ object Screens {
             )
             Text(
                 "لو عرفت اسم السكربت الحقيقي من صفحة التشخيص أو من متصفح الكمبيوتر، اكتبه هنا ومش هتحتاج نسخة جديدة.",
-                color = Color.Gray, fontSize = 12.sp
+                color = Color(0xFF9DB8DC), fontSize = 12.sp
             )
             Spacer(Modifier.height(8.dp))
             Button(
@@ -377,7 +377,7 @@ object Screens {
             )
             Text(
                 "التطبيق بيشتغل على واي فاي البيت بس، والباسورد محفوظ على موبايلك بس ومبيتبعتش لأي حد.",
-                color = Color.LightGray, fontSize = 13.sp
+                color = Color(0xFFDCE8FA), fontSize = 13.sp
             )
         }
     }
@@ -422,7 +422,7 @@ object Screens {
             }
             Text(
                 "التشخيص يفحص صفحة الأجهزة والتحكم الأبوي، ويعرض كود initial_QueryAccessDeviceLink الذي تستخدمه واجهة الراوتر لجلب الأجهزة، حتى نحدد طلب API الحقيقي بدل تخمينه.",
-                color = Color.LightGray, fontSize = 13.sp
+                color = Color(0xFFDCE8FA), fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
             Button(onClick = { vm.runDiagnostics() }, modifier = Modifier.fillMaxWidth()) {
@@ -440,12 +440,12 @@ object Screens {
                     Card(
                         Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (d.ok) Color(0xFF1B5E20) else Color(0xFF242424)
+                            containerColor = if (d.ok) Color(0xFF007A4D) else Color(0xFF17407E)
                         )
                     ) {
                         Column(Modifier.padding(12.dp)) {
                             Text(d.label, color = Color.White, fontSize = 15.sp)
-                            Text(d.detail, color = Color.LightGray, fontSize = 12.sp)
+                            Text(d.detail, color = Color(0xFFDCE8FA), fontSize = 12.sp)
                         }
                     }
                 }
