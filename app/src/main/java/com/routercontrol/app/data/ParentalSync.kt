@@ -244,60 +244,88 @@ object ParentalSync {
                 devices.debugDeviceInitializer.isNotBlank()
             )
         )
-        // 1. Open the parental view; the HTML embeds _sessionTmpToken.
-        val (viewCode, viewHtml) = client.rawGet(
-            settings,
-            "?_type=menuView&_tag=$VIEW_TAG&_=${System.currentTimeMillis()}"
-        )
-        val pageToken = extractPageToken(viewHtml)
-        entries.add(
-            DiagnosticsEntry(
-                "صفحة التحكم الأبوي (parentCtrl)",
-                "HTTP $viewCode — " + if (viewHtml.isBlank()) "(رد فاضي)" else
-                    "توكن الصفحة: " + (if (pageToken.isNullOrBlank()) "مش موجود" else "موجود") +
-                    " — " + snippet(viewHtml),
-                viewCode == 200 && !hasSessionTimeout(viewHtml)
-            )
-        )
-        // The parental view's own HTML names the data scripts this firmware
-        // uses — read them out and try them alongside the public guesses (v1.2).
-        val viewTags = client.extractLuaTags(viewHtml)
-        val candidates = (CANDIDATE_SCRIPTS + viewTags).distinct()
-        entries.add(
-            DiagnosticsEntry(
-                "عناوين لقيناها في صفحة الروتر",
-                if (viewTags.isEmpty()) "مفيش أسماء سكربتات ظاهرة في الصفحة — هنجرّب العناوين المعروفة بس"
-                else viewTags.joinToString("، "),
-                viewTags.isNotEmpty()
-            )
-        )
-        // 2. Try each data script.
-        for (script in candidates) {
-            val (code, body) = client.rawGet(
+        // Parental reads run on a FRESH admin session, retried once (v1.8.6).
+        // The anonymous device handshake (v1.8.4) logs in again with the admin
+        // account, and this router keeps a single admin session — so by the time
+        // getDevices returns, the session these reads need is already evicted:
+        // the parentCtrl view answers 404 and every data script SessionTimeout.
+        // A fresh login right before the parental reads (and one retry) makes
+        // the parental side self-healing. Only the last attempt's entries are
+        // kept in the report, so the Diagnostics list does not duplicate.
+        var foundRules: List<ParentalRule> = emptyList()
+        var foundTag = ""
+        var foundToken: String? = null
+        var parentalEntries: List<DiagnosticsEntry> = emptyList()
+        for (attempt in 0..1) {
+            val refresh = client.login(settings)
+            if (refresh is RouterResult.Failure) {
+                parentalEntries = listOf(DiagnosticsEntry("تسجيل الدخول", refresh.message, false))
+                break
+            }
+            val attemptEntries = mutableListOf<DiagnosticsEntry>()
+            // 1. Open the parental view; the HTML embeds _sessionTmpToken.
+            val (viewCode, viewHtml) = client.rawGet(
                 settings,
-                "?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}"
+                "?_type=menuView&_tag=$VIEW_TAG&_=${System.currentTimeMillis()}"
             )
-            val timeout = hasSessionTimeout(body)
-            val ok = code == 200 && looksLikeSuccess(body)
-            val instances = if (ok) parseInstances(body) else emptyList()
-            val rules = instances.mapNotNull { fieldsToRule(it) }
-            entries.add(
+            val attemptToken = extractPageToken(viewHtml)
+            attemptEntries.add(
                 DiagnosticsEntry(
-                    label = script,
-                    detail = "HTTP $code — " +
-                        (if (timeout) "SessionTimeout (العنوان مش موجود في السوفت، أو الجلسة اتقطعت) — " else "") +
-                        (if (rules.isNotEmpty()) "القواعد: " + rules.joinToString("، ") {
-                            it.name + if (it.enabled) " (شغالة)" else " (مقفولة)"
-                        } + " — " else "") +
-                        (if (body.isBlank()) "(رد فاضي)" else snippet(body)),
-                    ok = ok && rules.isNotEmpty()
+                    "صفحة التحكم الأبوي (parentCtrl)",
+                    "HTTP $viewCode — " + if (viewHtml.isBlank()) "(رد فاضي)" else
+                        "توكن الصفحة: " + (if (attemptToken.isNullOrBlank()) "مش موجود" else "موجود") +
+                        " — " + snippet(viewHtml),
+                    viewCode == 200 && !hasSessionTimeout(viewHtml)
                 )
             )
-            if (ok && rules.isNotEmpty()) {
-                return FetchedRules(rules, script, pageToken, entries)
+            // The parental view's own HTML names the data scripts this firmware
+            // uses — read them out and try them alongside the public guesses (v1.2).
+            val viewTags = client.extractLuaTags(viewHtml)
+            val candidates = (CANDIDATE_SCRIPTS + viewTags).distinct()
+            attemptEntries.add(
+                DiagnosticsEntry(
+                    "عناوين لقيناها في صفحة الروتر",
+                    if (viewTags.isEmpty()) "مفيش أسماء سكربتات ظاهرة في الصفحة — هنجرّب العناوين المعروفة بس"
+                    else viewTags.joinToString("، "),
+                    viewTags.isNotEmpty()
+                )
+            )
+            // 2. Try each data script.
+            var attemptOk = false
+            for (script in candidates) {
+                val (code, body) = client.rawGet(
+                    settings,
+                    "?_type=menuData&_tag=$script&_=${System.currentTimeMillis()}"
+                )
+                val timeout = hasSessionTimeout(body)
+                val ok = code == 200 && looksLikeSuccess(body)
+                val instances = if (ok) parseInstances(body) else emptyList()
+                val rules = instances.mapNotNull { fieldsToRule(it) }
+                attemptEntries.add(
+                    DiagnosticsEntry(
+                        label = script,
+                        detail = "HTTP $code — " +
+                            (if (timeout) "SessionTimeout (العنوان مش موجود في السوفت، أو الجلسة اتقطعت) — " else "") +
+                            (if (rules.isNotEmpty()) "القواعد: " + rules.joinToString("، ") {
+                                it.name + if (it.enabled) " (شغالة)" else " (مقفولة)"
+                            } + " — " else "") +
+                            (if (body.isBlank()) "(رد فاضي)" else snippet(body)),
+                        ok = ok && rules.isNotEmpty()
+                    )
+                )
+                if (ok && rules.isNotEmpty()) {
+                    foundRules = rules
+                    foundTag = script
+                    foundToken = attemptToken
+                    attemptOk = true
+                    break
+                }
             }
+            parentalEntries = attemptEntries
+            if (attemptOk) break
         }
-        return FetchedRules(emptyList(), "", pageToken, entries)
+        entries.addAll(parentalEntries)
+        return FetchedRules(foundRules, foundTag, foundToken, entries)
     }
 
     /** Backwards-compatible probe: discovery entries for the Diagnostics screen. */
@@ -356,6 +384,11 @@ object ParentalSync {
         rule: ParentalRule,
         enabled: Boolean
     ): RouterResult {
+        // Fresh admin session for the write (v1.8.6): the Who's Online anonymous
+        // handshake may have evicted the session this write needs, so a toggle
+        // posted on the stale session comes back HTTP 200 without SUCC.
+        val fresh = client.login(settings)
+        if (fresh is RouterResult.Failure) return fresh
         val tag: String
         var pageToken: String? = null
         if (settings.parentalScript.isNotBlank()) {
@@ -428,6 +461,9 @@ object ParentalSync {
         settings: RouterSettings,
         rule: ParentalRule
     ): RouterResult {
+        // Fresh admin session for the write (v1.8.6, same reason as applyRule).
+        val fresh = client.login(settings)
+        if (fresh is RouterResult.Failure) return fresh
         val tag = if (settings.parentalScript.isNotBlank()) {
             settings.parentalScript
         } else {
