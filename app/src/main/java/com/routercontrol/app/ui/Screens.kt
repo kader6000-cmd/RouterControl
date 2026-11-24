@@ -21,6 +21,15 @@ import com.routercontrol.app.data.RouterDevice
 import com.routercontrol.app.data.RuleSchedule
 import kotlinx.coroutines.launch
 
+// Facebook-style palette (v1.9.8): light gray feed background, white cards,
+// Facebook blue primary, dark text — replaces the dark navy/cyan theme.
+private val FbBlue = Color(0xFF1877F2)
+private val FbText = Color(0xFF050505)
+private val FbMuted = Color(0xFF65676B)
+private val FbWarn = Color(0xFF8A6100)
+private val FbRed = Color(0xFFF02849)
+private val FbGreen = Color(0xFF31A24C)
+
 private fun fmtMinutes(min: Int): String = "%02d:%02d".format(min / 60, min % 60)
 
 private fun parseHHMM(s: String): Int? {
@@ -42,17 +51,17 @@ object Screens {
                 Button(onClick = { vm.refreshAll() }) { Text("تحديث") }
                 Button(
                     onClick = { vm.blockAll() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))
+                    colors = ButtonDefaults.buttonColors(containerColor = FbRed)
                 ) { Text("اقفل الكل (وضع النوم)") }
             }
             Spacer(Modifier.height(8.dp))
             Text(
                 "On = القاعدة شغالة = الجهاز محظور طول اليوم. Off = الجهاز مفتوح.",
-                color = Color(0xFFDCE8FA), fontSize = 13.sp
+                color = FbMuted, fontSize = 13.sp
             )
             Text(
                 "لو ظهرت علامة (لم يؤكد الروتر) جنب قاعدة، يبقى التغيير اتحفظ محليا بس — شوف صفحة التشخيص.",
-                color = Color(0xFFFFB74D), fontSize = 13.sp
+                color = FbWarn, fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
             if (state.loading) {
@@ -60,7 +69,7 @@ object Screens {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.rules, key = { it.name }) { rule ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17407E))) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbText)) {
                         Column(Modifier.padding(12.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -68,14 +77,14 @@ object Screens {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column {
-                                    Text(rule.name, color = Color.White, fontSize = 17.sp)
+                                    Text(rule.name, color = FbText, fontSize = 17.sp)
                                     Text(
                                         if (rule.mac.isBlank()) "مش مربوط بجهاز — اربطه من صفحة مين أونلاين"
                                         else "MAC: ${rule.mac}",
-                                        color = Color(0xFFDCE8FA), fontSize = 12.sp
+                                        color = FbMuted, fontSize = 12.sp
                                     )
                                     if (rule.pendingSync) {
-                                        Text("لم يؤكد الروتر بعد", color = Color(0xFFFFB74D), fontSize = 12.sp)
+                                        Text("لم يؤكد الروتر بعد", color = FbWarn, fontSize = 12.sp)
                                     }
                                 }
                                 Switch(
@@ -86,11 +95,11 @@ object Screens {
                             if (!rule.enabled) {
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("افتح مؤقتا:", color = Color(0xFFDCE8FA), fontSize = 13.sp)
+                                    Text("افتح مؤقتا:", color = FbMuted, fontSize = 13.sp)
                                     Button(onClick = { vm.openTemporarily(rule, 30) }) { Text("30 دقيقة") }
                                     Button(onClick = { vm.openTemporarily(rule, 60) }) { Text("ساعة") }
                                 }
-                                Text("هيتقفل لوحده بعد ما الوقت يخلص.", color = Color(0xFF9DB8DC), fontSize = 12.sp)
+                                Text("هيتقفل لوحده بعد ما الوقت يخلص.", color = FbMuted, fontSize = 12.sp)
                             }
                         }
                     }
@@ -110,17 +119,17 @@ object Screens {
             Spacer(Modifier.height(8.dp))
             Text(
                 "الأجهزة المتصلة دلوقتي بالروتر (واي فاي + سلك). دوس حظر على أي جهاز، ولو ليه قاعدة هيتقلب زرارها، ولو جديد هيتعمل له قاعدة حظر جديدة.",
-                color = Color(0xFFDCE8FA), fontSize = 13.sp
+                color = FbMuted, fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
             if (state.loading) CircularProgressIndicator()
             if (state.devices.isEmpty() && !state.loading) {
-                Text("مفيش أجهزة ظاهرة — دوس تحديث، واتأكد إنك متصل بواي فاي البيت.", color = Color(0xFFDCE8FA))
+                Text("مفيش أجهزة ظاهرة — دوس تحديث، واتأكد إنك متصل بواي فاي البيت.", color = FbMuted)
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.devices, key = { it.mac }) { device ->
                     val linked = state.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17407E))) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbText)) {
                         Column(Modifier.padding(12.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -128,12 +137,12 @@ object Screens {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(device.name, color = Color.White, fontSize = 16.sp)
+                                    Text(device.name, color = FbText, fontSize = 16.sp)
                                     Text(
                                         "${device.networkType} — ${device.ip.ifBlank { "من غير IP" }}",
-                                        color = Color(0xFFDCE8FA), fontSize = 12.sp
+                                        color = FbMuted, fontSize = 12.sp
                                     )
-                                    Text(device.mac, color = Color(0xFF9DB8DC), fontSize = 12.sp)
+                                    Text(device.mac, color = FbMuted, fontSize = 12.sp)
                                     if (linked != null) {
                                         // A rule the router never confirmed (pendingSync) is
                                         // only blocked locally — say so, and let the user
@@ -145,8 +154,8 @@ object Screens {
                                         }
                                         val stateColor = when {
                                             linked.enabled && linked.pendingSync -> Color(0xFFFF9500)
-                                            linked.enabled -> Color(0xFFFF5252)
-                                            else -> Color(0xFF00E676)
+                                            linked.enabled -> FbRed
+                                            else -> FbGreen
                                         }
                                         Text(
                                             "مربوط بقاعدة: ${linked.name} — $stateText",
@@ -163,19 +172,19 @@ object Screens {
                                         // never confirmed it, so the user must be
                                         // able to retry from this page.
                                         enabled = linked == null || !linked.enabled || linked.pendingSync,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))
+                                        colors = ButtonDefaults.buttonColors(containerColor = FbRed)
                                     ) { Text("حظر") }
                                     Spacer(Modifier.height(6.dp))
                                     Button(
                                         onClick = { vm.unblockDevice(device) },
                                         enabled = linked?.enabled == true,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
+                                        colors = ButtonDefaults.buttonColors(containerColor = FbGreen)
                                     ) { Text("سماح") }
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
                             TextButton(onClick = { linkDevice = device }) {
-                                Text("ربط الجهاز ده بقاعدة موجودة", color = Color(0xFF00C8FF), fontSize = 12.sp)
+                                Text("ربط الجهاز ده بقاعدة موجودة", color = FbBlue, fontSize = 12.sp)
                             }
                         }
                     }
@@ -216,13 +225,13 @@ object Screens {
         var daysPreset by remember { mutableStateOf(0x7F) }
         var enabled by remember { mutableStateOf(true) }
         Column(Modifier.fillMaxSize()) {
-            Text("جدولة الحظر التلقائي", color = Color.White, fontSize = 18.sp)
+            Text("جدولة الحظر التلقائي", color = FbText, fontSize = 18.sp)
             Text(
                 "مثال: اقفل جهاز أحمد كل يوم من 11 بالليل لـ 7 الصبح. الجدولة بتتنفذ من التطبيق كل ربع ساعة وانت على واي فاي البيت.",
-                color = Color(0xFFDCE8FA), fontSize = 13.sp
+                color = FbMuted, fontSize = 13.sp
             )
             Spacer(Modifier.height(12.dp))
-            Text("القاعدة:", color = Color.White)
+            Text("القاعدة:", color = FbText)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 state.rules.forEach { rule ->
                     FilterChip(
@@ -250,7 +259,7 @@ object Screens {
                 )
             }
             Spacer(Modifier.height(8.dp))
-            Text("الأيام:", color = Color.White)
+            Text("الأيام:", color = FbText)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = daysPreset == 0x7F, onClick = { daysPreset = 0x7F }, label = { Text("كل يوم") })
                 FilterChip(selected = daysPreset == 0x1F, onClick = { daysPreset = 0x1F }, label = { Text("الأحد - الخميس") })
@@ -260,7 +269,7 @@ object Screens {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = enabled, onCheckedChange = { enabled = it })
                 Spacer(Modifier.width(8.dp))
-                Text("الجدولة شغالة", color = Color.White)
+                Text("الجدولة شغالة", color = FbText)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -280,10 +289,10 @@ object Screens {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("حفظ الجدولة") }
             Spacer(Modifier.height(12.dp))
-            Text("الجداول المحفوظة:", color = Color.White, fontSize = 16.sp)
+            Text("الجداول المحفوظة:", color = FbText, fontSize = 16.sp)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.schedules, key = { it.ruleName }) { s ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17407E))) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbText)) {
                         Row(
                             Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -292,10 +301,10 @@ object Screens {
                             Text(
                                 "${s.ruleName}: ${fmtMinutes(s.startMinutes)} - ${fmtMinutes(s.endMinutes)} " +
                                     if (s.enabled) "(شغالة)" else "(واقفة)",
-                                color = Color.White
+                                color = FbText
                             )
                             TextButton(onClick = { vm.deleteSchedule(s.ruleName) }) {
-                                Text("مسح", color = Color(0xFFFF6B6B))
+                                Text("مسح", color = FbRed)
                             }
                         }
                     }
@@ -315,7 +324,7 @@ object Screens {
         var pin by remember { mutableStateOf("") }
         val pinScope = rememberCoroutineScope()
         Column(Modifier.fillMaxSize()) {
-            Text("إعدادات الروتر", color = Color.White, fontSize = 18.sp)
+            Text("إعدادات الروتر", color = FbText, fontSize = 18.sp)
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = host, onValueChange = { host = it },
@@ -340,7 +349,7 @@ object Screens {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = useHttps, onCheckedChange = { useHttps = it })
                 Spacer(Modifier.width(8.dp))
-                Text("استخدم https بدل http (الافتراضي http للروتر ده)", color = Color.White, fontSize = 13.sp)
+                Text("استخدم https بدل http (الافتراضي http للروتر ده)", color = FbText, fontSize = 13.sp)
             }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
@@ -350,7 +359,7 @@ object Screens {
             )
             Text(
                 "لو عرفت اسم السكربت الحقيقي من صفحة التشخيص أو من متصفح الكمبيوتر، اكتبه هنا ومش هتحتاج نسخة جديدة.",
-                color = Color(0xFF9DB8DC), fontSize = 12.sp
+                color = FbMuted, fontSize = 12.sp
             )
             Spacer(Modifier.height(8.dp))
             Button(
@@ -366,7 +375,7 @@ object Screens {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("حفظ الإعدادات") }
             Spacer(Modifier.height(16.dp))
-            Text("الرقم السري للتطبيق", color = Color.White, fontSize = 16.sp)
+            Text("الرقم السري للتطبيق", color = FbText, fontSize = 16.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = pin, onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) pin = it },
@@ -390,11 +399,11 @@ object Screens {
             Spacer(Modifier.height(12.dp))
             Text(
                 "تنبيه مهم: الموبايلات اللي مفعّلة الـ MAC العشوائي (Private MAC) ممكن تهرب من الحظر، لأن الروتر بيحظر بالماك. ثبّت الماك من إعدادات الواي فاي على جهاز العيال (Use device MAC).",
-                color = Color(0xFFFFB74D), fontSize = 13.sp
+                color = FbWarn, fontSize = 13.sp
             )
             Text(
                 "التطبيق بيشتغل على واي فاي البيت بس، والباسورد محفوظ على موبايلك بس ومبيتبعتش لأي حد.",
-                color = Color(0xFFDCE8FA), fontSize = 13.sp
+                color = FbMuted, fontSize = 13.sp
             )
         }
     }
@@ -427,7 +436,7 @@ object Screens {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("التشخيص", color = Color.White, fontSize = 18.sp)
+                Text("التشخيص", color = FbText, fontSize = 18.sp)
                 OutlinedButton(onClick = {
                     clipboard.setText(AnnotatedString(diagnosticReport))
                     copied = true
@@ -439,7 +448,7 @@ object Screens {
             }
             Text(
                 "التشخيص يفحص صفحة الأجهزة والتحكم الأبوي، ويعرض كود initial_QueryAccessDeviceLink الذي تستخدمه واجهة الراوتر لجلب الأجهزة، حتى نحدد طلب API الحقيقي بدل تخمينه.",
-                color = Color(0xFFDCE8FA), fontSize = 13.sp
+                color = FbMuted, fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
             Button(onClick = { vm.runDiagnostics() }, modifier = Modifier.fillMaxWidth()) {
@@ -449,7 +458,7 @@ object Screens {
             if (state.loading) CircularProgressIndicator()
             Text(
                 "العنوان المؤكد حاليا: ${state.settings.parentalScript.ifBlank { "لسه مش مؤكد" }}",
-                color = Color.White, fontSize = 13.sp
+                color = FbText, fontSize = 13.sp
             )
             Spacer(Modifier.height(8.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -457,16 +466,61 @@ object Screens {
                     Card(
                         Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (d.ok) Color(0xFF007A4D) else Color(0xFF17407E)
+                            containerColor = if (d.ok) Color(0xFFE6F4EA) else Color(0xFFFDECEA)
                         )
                     ) {
                         Column(Modifier.padding(12.dp)) {
-                            Text(d.label, color = Color.White, fontSize = 15.sp)
-                            Text(d.detail, color = Color(0xFFDCE8FA), fontSize = 12.sp)
+                            Text(d.label, color = FbText, fontSize = 15.sp)
+                            Text(d.detail, color = FbMuted, fontSize = 12.sp)
                         }
                     }
                 }
             }
+        }
+    }
+
+    /** Tools tab: the diagnostics screen lives here (v1.9.8). */
+    @Composable
+    fun ToolsPage(vm: RouterViewModel) {
+        Column(Modifier.fillMaxSize()) {
+            Text(
+                "أدوات مساعدة — التشخيص بيفحص الاتصال بالروتر وصفحة التحكم الأبوي، ولو حصلت مشكلة في الحظر انسخ التقرير من هنا.",
+                color = FbMuted, fontSize = 13.sp
+            )
+            Spacer(Modifier.height(8.dp))
+            DiagnosticsPage(vm)
+        }
+    }
+
+    /** About tab (v1.9.8): developer + version, with the schedule section inside. */
+    @Composable
+    fun AboutPage(vm: RouterViewModel) {
+        Column(Modifier.fillMaxSize()) {
+            Text("حول التطبيق", color = FbText, fontSize = 18.sp)
+            Spacer(Modifier.height(8.dp))
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("التحكم في الروتر", color = FbText, fontSize = 18.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("تطوير: Abdelkader Ahmed", color = FbBlue, fontSize = 15.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "الإصدار: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        color = FbMuted, fontSize = 13.sp
+                    )
+                    Text("الروتر: ZTE ZXHN H288A — 192.168.1.1", color = FbMuted, fontSize = 13.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "التطبيق بيتحكم في التحكم الأبوي للروتر من موبايلك: حظر وسماح للأجهزة، وجدولة تلقائية، ومزامنة مع صفحة الروتر.",
+                        color = FbMuted, fontSize = 13.sp
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            SchedulePage(vm)
         }
     }
 }
