@@ -147,10 +147,10 @@ private fun AppShell(vm: RouterViewModel) {
         topBar = {
             Column(
                 Modifier.fillMaxWidth().background(FbCard)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = 16.dp).padding(top = 14.dp, bottom = 8.dp)
             ) {
-                Text("التحكم في الروتر", color = FbBlue, fontSize = 24.sp)
-                Text("ZTE H288A — 192.168.1.1", color = FbMuted, fontSize = 13.sp)
+                Text("التحكم في الروتر", color = FbBlue, fontSize = 20.sp)
+                Text("ZTE H288A — 192.168.1.1", color = FbMuted, fontSize = 12.sp)
             }
         },
         bottomBar = {
@@ -173,7 +173,7 @@ private fun AppShell(vm: RouterViewModel) {
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
             if (state.message != null) {
                 Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2E42))) {
                     Text(
