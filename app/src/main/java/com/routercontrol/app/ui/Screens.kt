@@ -21,12 +21,16 @@ import com.routercontrol.app.data.RouterDevice
 import com.routercontrol.app.data.RuleSchedule
 import kotlinx.coroutines.launch
 
-// Facebook-style palette (v1.9.8): light gray feed background, white cards,
-// Facebook blue primary, dark text — replaces the dark navy/cyan theme.
-private val FbBlue = Color(0xFF1877F2)
-private val FbText = Color(0xFF050505)
-private val FbMuted = Color(0xFF65676B)
-private val FbWarn = Color(0xFF8A6100)
+// Facebook dark-mode palette (v1.9.9): dark gray feed background, darker cards,
+// Facebook dark blue primary, light text — replaces the light theme.
+// (v1.9.8 bug: a chained color swap turned the cards near-black with dark
+// text on them, so the rule names were invisible. The card color is now
+// its own constant, FbCard, never a text color.)
+private val FbBlue = Color(0xFF2D88FF)
+private val FbCard = Color(0xFF242526)
+private val FbText = Color(0xFFE4E6EB)
+private val FbMuted = Color(0xFFB0B3B8)
+private val FbWarn = Color(0xFFFFB74D)
 private val FbRed = Color(0xFFF02849)
 private val FbGreen = Color(0xFF31A24C)
 
@@ -69,7 +73,7 @@ object Screens {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.rules, key = { it.name }) { rule ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbText)) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbCard)) {
                         Column(Modifier.padding(12.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -129,7 +133,7 @@ object Screens {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.devices, key = { it.mac }) { device ->
                     val linked = state.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbText)) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbCard)) {
                         Column(Modifier.padding(12.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -292,7 +296,7 @@ object Screens {
             Text("الجداول المحفوظة:", color = FbText, fontSize = 16.sp)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.schedules, key = { it.ruleName }) { s ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbText)) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbCard)) {
                         Row(
                             Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -466,7 +470,7 @@ object Screens {
                     Card(
                         Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (d.ok) Color(0xFFE6F4EA) else Color(0xFFFDECEA)
+                            containerColor = if (d.ok) Color(0xFF1E3A29) else Color(0xFF3D2326)
                         )
                     ) {
                         Column(Modifier.padding(12.dp)) {
@@ -500,7 +504,7 @@ object Screens {
             Spacer(Modifier.height(8.dp))
             Card(
                 Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+                colors = CardDefaults.cardColors(containerColor = FbCard)
             ) {
                 Column(Modifier.padding(16.dp)) {
                     Text("التحكم في الروتر", color = FbText, fontSize = 18.sp)
