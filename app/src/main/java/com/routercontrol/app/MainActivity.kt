@@ -5,6 +5,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -13,20 +19,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.routercontrol.app.ui.RouterViewModel
 import com.routercontrol.app.ui.Screens
 import kotlinx.coroutines.launch
 
-// Bright vivid theme (v1.9.6): deep navy background, vivid cyan primary,
-// bright orange secondary, royal-blue panels — replaces the old gold/black.
-private val Navy = Color(0xFF0A1B33)
-private val Cyan = Color(0xFF00C8FF)
-private val Orange = Color(0xFFFF9500)
-private val Panel = Color(0xFF17407E)
+// Facebook-style theme (v1.9.8): light gray feed background, white cards and
+// top bar, Facebook blue primary — replaces the dark navy/cyan theme.
+// The launcher icon is NOT changed (user request).
+private val FbBlue = Color(0xFF1877F2)
+private val FbLightBlue = Color(0xFFE7F3FF)
+private val FbBg = Color(0xFFF0F2F5)
+private val FbText = Color(0xFF050505)
+private val FbMuted = Color(0xFF65676B)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,7 +44,17 @@ class MainActivity : ComponentActivity() {
             val state by vm.state.collectAsState()
             var unlocked by remember { mutableStateOf(false) }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Orange, tertiary = Color(0xFFB388FF), background = Navy, surface = Panel, onPrimary = Color(0xFF00222E), onSecondary = Color(0xFF2A1500))) {
+                MaterialTheme(
+                    colorScheme = lightColorScheme(
+                        primary = FbBlue,
+                        secondary = FbBlue,
+                        background = FbBg,
+                        surface = Color.White,
+                        onPrimary = Color.White,
+                        onBackground = FbText,
+                        onSurface = FbText
+                    )
+                ) {
                     if (state.pinSet && !unlocked) {
                         PinScreen(vm) { unlocked = true }
                     } else {
@@ -58,14 +76,14 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
         isSetup = !vm.isPinSet()
     }
     Column(
-        Modifier.fillMaxSize().background(Navy).padding(24.dp),
+        Modifier.fillMaxSize().background(FbBg).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(if (isSetup) "عيّن رقم سري للتطبيق" else "اكتب الرقم السري", color = Cyan, fontSize = 22.sp)
+        Text(if (isSetup) "عيّن رقم سري للتطبيق" else "اكتب الرقم السري", color = FbBlue, fontSize = 22.sp)
         Text(
             "4 أرقام — عشان العيال ما يفتحوش التطبيق ويفكّوا الحظر بنفسهم",
-            color = Color(0xFFDCE8FA), fontSize = 14.sp
+            color = FbMuted, fontSize = 14.sp
         )
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(
@@ -78,7 +96,7 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
         )
         if (error != null) {
             Spacer(Modifier.height(8.dp))
-            Text(error ?: "", color = Color(0xFFFF6B6B))
+            Text(error ?: "", color = Color(0xFFF02849))
         }
         Spacer(Modifier.height(16.dp))
         Button(
@@ -103,7 +121,7 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(
             "لو نسيت الرقم: امسح بيانات التطبيق من إعدادات الموبايل (هيتمسح معاها إعدادات الروتر المحفوظة).",
-            color = Color(0xFF9DB8DC), fontSize = 12.sp
+            color = FbMuted, fontSize = 12.sp
         )
     }
 }
@@ -112,34 +130,67 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
 private fun AppShell(vm: RouterViewModel) {
     val state by vm.state.collectAsState()
     var page by remember { mutableStateOf("rules") }
-    Column(Modifier.fillMaxSize().background(Navy).padding(16.dp)) {
-        Text("التحكم في الروتر", color = Cyan, fontSize = 25.sp)
-        Text("ZTE H288A — 192.168.1.1", color = Color.White, fontSize = 14.sp)
-        if (state.message != null) {
-            Spacer(Modifier.height(8.dp))
-            Text(state.message ?: "", color = Color(0xFF90CAF9), fontSize = 13.sp)
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(
-                "rules" to "القواعد",
-                "online" to "مين أونلاين",
-                "schedule" to "الجدولة",
-                "settings" to "الإعدادات",
-                "diag" to "التشخيص"
-            ).forEach { (key, label) ->
-                TextButton(onClick = { page = key }) {
-                    Text(label, color = if (page == key) Cyan else Color(0xFFDCE8FA), fontSize = 11.sp)
+    // Facebook-style shell (v1.9.8): white top bar with the blue title,
+    // light gray feed background, and a bottom tab bar with icons.
+    // Tabs: Rules, Who's Online, Tools (diagnostics inside), About
+    // (developer + schedule inside), Settings. The launcher icon is unchanged.
+    val tabs = listOf(
+        Triple("rules", "القواعد", Icons.Filled.Home),
+        Triple("online", "مين أونلاين", Icons.Filled.People),
+        Triple("tools", "أدوات", Icons.Filled.Build),
+        Triple("about", "حول", Icons.Filled.Info),
+        Triple("settings", "الإعدادات", Icons.Filled.Settings)
+    )
+    Scaffold(
+        containerColor = FbBg,
+        topBar = {
+            Column(
+                Modifier.fillMaxWidth().background(Color.White)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                Text("التحكم في الروتر", color = FbBlue, fontSize = 24.sp)
+                Text("ZTE H288A — 192.168.1.1", color = FbMuted, fontSize = 13.sp)
+            }
+        },
+        bottomBar = {
+            NavigationBar(containerColor = Color.White) {
+                tabs.forEach { (key, label, icon) ->
+                    NavigationBarItem(
+                        selected = page == key,
+                        onClick = { page = key },
+                        icon = { Icon(icon, contentDescription = label) },
+                        label = { Text(label, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = FbBlue,
+                            selectedTextColor = FbBlue,
+                            unselectedIconColor = FbMuted,
+                            unselectedTextColor = FbMuted,
+                            indicatorColor = FbLightBlue
+                        )
+                    )
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        when (page) {
-            "online" -> Screens.OnlinePage(vm)
-            "schedule" -> Screens.SchedulePage(vm)
-            "settings" -> Screens.SettingsPage(vm)
-            "diag" -> Screens.DiagnosticsPage(vm)
-            else -> Screens.RulesPage(vm)
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+            if (state.message != null) {
+                Card(colors = CardDefaults.cardColors(containerColor = FbLightBlue)) {
+                    Text(
+                        state.message ?: "",
+                        color = FbBlue,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            when (page) {
+                "online" -> Screens.OnlinePage(vm)
+                "tools" -> Screens.ToolsPage(vm)
+                "about" -> Screens.AboutPage(vm)
+                "settings" -> Screens.SettingsPage(vm)
+                else -> Screens.RulesPage(vm)
+            }
         }
     }
 }
