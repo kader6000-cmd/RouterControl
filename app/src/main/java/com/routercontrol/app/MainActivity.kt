@@ -27,14 +27,15 @@ import com.routercontrol.app.ui.RouterViewModel
 import com.routercontrol.app.ui.Screens
 import kotlinx.coroutines.launch
 
-// Facebook-style theme (v1.9.8): light gray feed background, white cards and
-// top bar, Facebook blue primary — replaces the dark navy/cyan theme.
-// The launcher icon is NOT changed (user request).
-private val FbBlue = Color(0xFF1877F2)
-private val FbLightBlue = Color(0xFFE7F3FF)
-private val FbBg = Color(0xFFF0F2F5)
-private val FbText = Color(0xFF050505)
-private val FbMuted = Color(0xFF65676B)
+// Facebook dark-mode theme (v1.9.9): dark gray feed background, darker cards
+// and top bar, Facebook dark blue primary, light text — replaces the light
+// theme (the user does not like the white app). The launcher icon is NOT changed.
+private val FbBlue = Color(0xFF2D88FF)
+private val FbLightBlue = Color(0xFF3A3B3C)
+private val FbBg = Color(0xFF18191A)
+private val FbCard = Color(0xFF242526)
+private val FbText = Color(0xFFE4E6EB)
+private val FbMuted = Color(0xFFB0B3B8)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,11 +46,11 @@ class MainActivity : ComponentActivity() {
             var unlocked by remember { mutableStateOf(false) }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 MaterialTheme(
-                    colorScheme = lightColorScheme(
+                    colorScheme = darkColorScheme(
                         primary = FbBlue,
                         secondary = FbBlue,
                         background = FbBg,
-                        surface = Color.White,
+                        surface = FbCard,
                         onPrimary = Color.White,
                         onBackground = FbText,
                         onSurface = FbText
@@ -145,7 +146,7 @@ private fun AppShell(vm: RouterViewModel) {
         containerColor = FbBg,
         topBar = {
             Column(
-                Modifier.fillMaxWidth().background(Color.White)
+                Modifier.fillMaxWidth().background(FbCard)
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
                 Text("التحكم في الروتر", color = FbBlue, fontSize = 24.sp)
@@ -153,7 +154,7 @@ private fun AppShell(vm: RouterViewModel) {
             }
         },
         bottomBar = {
-            NavigationBar(containerColor = Color.White) {
+            NavigationBar(containerColor = FbCard) {
                 tabs.forEach { (key, label, icon) ->
                     NavigationBarItem(
                         selected = page == key,
@@ -174,7 +175,7 @@ private fun AppShell(vm: RouterViewModel) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
             if (state.message != null) {
-                Card(colors = CardDefaults.cardColors(containerColor = FbLightBlue)) {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2E42))) {
                     Text(
                         state.message ?: "",
                         color = FbBlue,
