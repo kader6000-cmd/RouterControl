@@ -1,18 +1,26 @@
 package com.routercontrol.app.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -23,18 +31,19 @@ import com.routercontrol.app.data.RouterDevice
 import com.routercontrol.app.data.RuleSchedule
 import kotlinx.coroutines.launch
 
-// Facebook dark-mode palette (v1.9.9): dark gray feed background, darker cards,
-// Facebook dark blue primary, light text — replaces the light theme.
-// (v1.9.8 bug: a chained color swap turned the cards near-black with dark
-// text on them, so the rule names were invisible. The card color is now
-// its own constant, FbCard, never a text color.)
-private val FbBlue = Color(0xFF2D88FF)
-private val FbCard = Color(0xFF242526)
-private val FbText = Color(0xFFE4E6EB)
-private val FbMuted = Color(0xFFB0B3B8)
-private val FbWarn = Color(0xFFFFB74D)
-private val FbRed = Color(0xFFF02849)
-private val FbGreen = Color(0xFF31A24C)
+// Neon dark theme (v1.11.0): deep navy background, neon cyan/blue accents,
+// light text — replaces the Facebook dark palette. Values come from the
+// RouterColors tokens in NeonTheme.kt; the Fb* names are kept so the
+// existing screens keep working unchanged.
+private val FbBlue = Color(0xFF00E5FF)
+private val FbCard = Color(0xFF131929)
+private val FbText = Color(0xFFF4F7FF)
+private val FbMuted = Color(0xFF8E9BB5)
+private val FbWarn = Color(0xFFFFAB00)
+private val FbRed = Color(0xFFFF1744)
+private val FbGreen = Color(0xFF00E676)
+private val FbBorder = Color(0xFF26314D)
+private val FbElevated = Color(0xFF1A2238)
 
 private fun fmtMinutes(min: Int): String = "%02d:%02d".format(min / 60, min % 60)
 
@@ -56,14 +65,15 @@ object Screens {
         // so nothing is cut off at the bottom on small screens.
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { vm.refreshAll() }) { Text("تحديث") }
-                    Button(
-                        onClick = { vm.blockAll() },
-                        colors = ButtonDefaults.buttonColors(containerColor = FbRed)
-                    ) { Text("اقفل الكل (وضع النوم)") }
-                }
+                RouterHeroCard(
+                    routerModel = "ZTE H288A",
+                    routerIp = state.settings.host,
+                    blockedCount = state.rules.count { it.enabled },
+                    totalCount = state.rules.size,
+                    onRefreshClick = { vm.refreshAll() }
+                )
             }
+            item { SleepModeBanner(onClick = { vm.blockAll() }) }
             item {
                 Text(
                     "On = القاعدة شغالة = الجهاز محظور طول اليوم. Off = الجهاز مفتوح.",
@@ -80,22 +90,41 @@ object Screens {
                 item { CircularProgressIndicator() }
             }
             items(state.rules, key = { it.name }) { rule ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbCard)) {
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, FbBorder), colors = CardDefaults.cardColors(containerColor = FbCard)) {
                     Column(Modifier.padding(10.dp)) {
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text(rule.name, color = FbText, fontSize = 16.sp)
-                                Text(
-                                    if (rule.mac.isBlank()) "مش مربوط بجهاز — اربطه من صفحة مين أونلاين"
-                                    else "MAC: ${rule.mac}",
-                                    color = FbMuted, fontSize = 12.sp
-                                )
-                                if (rule.pendingSync) {
-                                    Text("لم يؤكد الروتر بعد", color = FbWarn, fontSize = 12.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (rule.enabled) FbRed.copy(alpha = 0.14f)
+                                            else Color(0xFF2979FF).copy(alpha = 0.14f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = iconForDeviceName(rule.name),
+                                        contentDescription = null,
+                                        tint = if (rule.enabled) FbRed else FbBlue,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(rule.name, color = FbText, fontSize = 16.sp)
+                                    Text(
+                                        if (rule.mac.isBlank()) "مش مربوط بجهاز — اربطه من صفحة مين أونلاين"
+                                        else "MAC: ${rule.mac}",
+                                        color = FbMuted, fontSize = 12.sp
+                                    )
+                                    if (rule.pendingSync) {
+                                        Text("لم يؤكد الروتر بعد", color = FbWarn, fontSize = 12.sp)
+                                    }
                                 }
                             }
                             Switch(
@@ -125,9 +154,12 @@ object Screens {
         // Whole page scrolls (v1.10.0): header + device list in one LazyColumn.
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { vm.refreshAll() }) { Text("تحديث القايمة") }
-                }
+                ScreenHeader(
+                    title = "مين أونلاين",
+                    subtitle = "ZTE H288A — ${state.settings.host}",
+                    actionIcon = Icons.Rounded.Refresh,
+                    onActionClick = { vm.refreshAll() }
+                )
             }
             item {
                 Text(
@@ -143,20 +175,38 @@ object Screens {
             }
             items(state.devices, key = { it.mac }) { device ->
                     val linked = state.rules.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) }
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbCard)) {
+                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, FbBorder), colors = CardDefaults.cardColors(containerColor = FbCard)) {
                         Column(Modifier.padding(10.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(device.name, color = FbText, fontSize = 15.sp)
-                                    Text(
-                                        "${device.networkType} — ${device.ip.ifBlank { "من غير IP" }}",
-                                        color = FbMuted, fontSize = 12.sp
-                                    )
-                                    Text(device.mac, color = FbMuted, fontSize = 12.sp)
+                                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(
+                                                if (linked?.enabled == true) FbRed.copy(alpha = 0.14f)
+                                                else Color(0xFF2979FF).copy(alpha = 0.14f)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = iconForDeviceName(device.name),
+                                            contentDescription = null,
+                                            tint = if (linked?.enabled == true) FbRed else FbBlue,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(device.name, color = FbText, fontSize = 15.sp)
+                                        Text(
+                                            "${device.networkType} — ${device.ip.ifBlank { "من غير IP" }}",
+                                            color = FbMuted, fontSize = 12.sp
+                                        )
+                                        Text(device.mac, color = FbMuted, fontSize = 12.sp)
                                     if (linked != null) {
                                         // A rule the router never confirmed (pendingSync) is
                                         // only blocked locally — say so, and let the user
@@ -176,6 +226,7 @@ object Screens {
                                             color = stateColor,
                                             fontSize = 12.sp
                                         )
+                                    }
                                     }
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
@@ -318,7 +369,7 @@ object Screens {
             }
             item { Text("الجداول المحفوظة:", color = FbText, fontSize = 15.sp) }
             items(state.schedules, key = { it.ruleName }) { s ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = FbCard)) {
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, FbBorder), colors = CardDefaults.cardColors(containerColor = FbCard)) {
                     Row(
                         Modifier.fillMaxWidth().padding(10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -352,24 +403,19 @@ object Screens {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Text("إعدادات الروتر", color = FbText, fontSize = 16.sp)
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            ModernTextField(
                 value = host, onValueChange = { host = it },
-                label = { Text("عنوان الروتر (مثال: 192.168.1.1)") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+                label = "عنوان الروتر (مثال: 192.168.1.1)"
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            ModernTextField(
                 value = username, onValueChange = { username = it },
-                label = { Text("اسم المستخدم") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+                label = "اسم المستخدم"
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            ModernTextField(
                 value = password, onValueChange = { password = it },
-                label = { Text("باسورد الأدمن") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password),
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+                label = "باسورد الأدمن", isPassword = true
             )
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -378,17 +424,18 @@ object Screens {
                 Text("استخدم https بدل http (الافتراضي http للروتر ده)", color = FbText, fontSize = 13.sp)
             }
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            ModernTextField(
                 value = parentalScript, onValueChange = { parentalScript = it },
-                label = { Text("عنوان صفحة التحكم الأبوي (متقدم — سيبه فاضي لو مش عارفه)") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+                label = "عنوان صفحة التحكم الأبوي (متقدم — سيبه فاضي لو مش عارفه)"
             )
             Text(
                 "لو عرفت اسم السكربت الحقيقي من صفحة التشخيص أو من متصفح الكمبيوتر، اكتبه هنا ومش هتحتاج نسخة جديدة.",
                 color = FbMuted, fontSize = 12.sp
             )
             Spacer(Modifier.height(8.dp))
-            Button(
+            NeonGradientButton(
+                text = "حفظ الإعدادات",
+                icon = Icons.Rounded.Save,
                 onClick = {
                     vm.saveSettings(
                         com.routercontrol.app.data.RouterSettings(
@@ -397,9 +444,8 @@ object Screens {
                             parentalScript = parentalScript.trim()
                         )
                     )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("حفظ الإعدادات") }
+                }
+            )
             Spacer(Modifier.height(16.dp))
             Text("الرقم السري للتطبيق", color = FbText, fontSize = 16.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -464,7 +510,7 @@ object Screens {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("التشخيص", color = FbText, fontSize = 16.sp)
+                    Text("التشخيص", color = FbText, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     OutlinedButton(onClick = {
                         clipboard.setText(AnnotatedString(diagnosticReport))
                         copied = true
@@ -496,6 +542,8 @@ object Screens {
             items(state.diagnostics, key = { it.label }) { d ->
                 Card(
                     Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, FbBorder),
                     colors = CardDefaults.cardColors(
                         containerColor = if (d.ok) Color(0xFF1E3A29) else Color(0xFF3D2326)
                     )
@@ -530,6 +578,8 @@ object Screens {
             Spacer(Modifier.height(8.dp))
             Card(
                 Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, FbBorder),
                 colors = CardDefaults.cardColors(containerColor = FbCard)
             ) {
                 Column(Modifier.padding(12.dp)) {
