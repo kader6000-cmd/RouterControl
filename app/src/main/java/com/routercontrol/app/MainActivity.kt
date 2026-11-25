@@ -5,12 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,19 +17,19 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.routercontrol.app.ui.ModernBottomNavBar
 import com.routercontrol.app.ui.RouterViewModel
 import com.routercontrol.app.ui.Screens
 import kotlinx.coroutines.launch
 
-// Facebook dark-mode theme (v1.9.9): dark gray feed background, darker cards
-// and top bar, Facebook dark blue primary, light text — replaces the light
-// theme (the user does not like the white app). The launcher icon is NOT changed.
-private val FbBlue = Color(0xFF2D88FF)
-private val FbLightBlue = Color(0xFF3A3B3C)
-private val FbBg = Color(0xFF18191A)
-private val FbCard = Color(0xFF242526)
-private val FbText = Color(0xFFE4E6EB)
-private val FbMuted = Color(0xFFB0B3B8)
+// Neon dark theme (v1.11.0): deep navy background, neon cyan/blue accents,
+// light text — replaces the Facebook dark palette. The launcher icon is
+// NOT changed.
+private val FbBlue = Color(0xFF2979FF)
+private val FbBg = Color(0xFF0A0D16)
+private val FbCard = Color(0xFF131929)
+private val FbText = Color(0xFFF4F7FF)
+private val FbMuted = Color(0xFF8E9BB5)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +42,7 @@ class MainActivity : ComponentActivity() {
                 MaterialTheme(
                     colorScheme = darkColorScheme(
                         primary = FbBlue,
-                        secondary = FbBlue,
+                        secondary = Color(0xFF00E5FF),
                         background = FbBg,
                         surface = FbCard,
                         onPrimary = Color.White,
@@ -130,66 +124,34 @@ private fun PinScreen(vm: RouterViewModel, onUnlock: () -> Unit) {
 @Composable
 private fun AppShell(vm: RouterViewModel) {
     val state by vm.state.collectAsState()
-    var page by remember { mutableStateOf("rules") }
-    // Facebook-style shell (v1.9.8): white top bar with the blue title,
-    // light gray feed background, and a bottom tab bar with icons.
+    var tab by remember { mutableIntStateOf(0) }
+    // Neon shell (v1.11.0): no top bar — each screen has its own header
+    // (hero card on Rules, ScreenHeader elsewhere) — and a neon bottom nav.
     // Tabs: Rules, Who's Online, Tools (diagnostics inside), About
     // (developer + schedule inside), Settings. The launcher icon is unchanged.
-    val tabs = listOf(
-        Triple("rules", "القواعد", Icons.Filled.Home),
-        Triple("online", "مين أونلاين", Icons.Filled.People),
-        Triple("tools", "أدوات", Icons.Filled.Build),
-        Triple("about", "حول", Icons.Filled.Info),
-        Triple("settings", "الإعدادات", Icons.Filled.Settings)
-    )
     Scaffold(
         containerColor = FbBg,
-        topBar = {
-            Column(
-                Modifier.fillMaxWidth().background(FbCard)
-                    .padding(horizontal = 16.dp).padding(top = 14.dp, bottom = 8.dp)
-            ) {
-                Text("التحكم في الروتر", color = FbBlue, fontSize = 20.sp)
-                Text("ZTE H288A — 192.168.1.1", color = FbMuted, fontSize = 12.sp)
-            }
-        },
         bottomBar = {
-            NavigationBar(containerColor = FbCard) {
-                tabs.forEach { (key, label, icon) ->
-                    NavigationBarItem(
-                        selected = page == key,
-                        onClick = { page = key },
-                        icon = { Icon(icon, contentDescription = label) },
-                        label = { Text(label, fontSize = 11.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = FbBlue,
-                            selectedTextColor = FbBlue,
-                            unselectedIconColor = FbMuted,
-                            unselectedTextColor = FbMuted,
-                            indicatorColor = FbLightBlue
-                        )
-                    )
-                }
-            }
+            ModernBottomNavBar(selectedIndex = tab, onSelect = { tab = it })
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
             if (state.message != null) {
-                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2E42))) {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1A2238))) {
                     Text(
                         state.message ?: "",
-                        color = FbBlue,
+                        color = Color(0xFF00E5FF),
                         fontSize = 13.sp,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
                 Spacer(Modifier.height(8.dp))
             }
-            when (page) {
-                "online" -> Screens.OnlinePage(vm)
-                "tools" -> Screens.ToolsPage(vm)
-                "about" -> Screens.AboutPage(vm)
-                "settings" -> Screens.SettingsPage(vm)
+            when (tab) {
+                1 -> Screens.OnlinePage(vm)
+                2 -> Screens.ToolsPage(vm)
+                3 -> Screens.AboutPage(vm)
+                4 -> Screens.SettingsPage(vm)
                 else -> Screens.RulesPage(vm)
             }
         }
