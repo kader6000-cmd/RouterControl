@@ -11,8 +11,8 @@ android {
         applicationId = "com.routercontrol.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "1.10.0"
+        versionCode = 35
+        versionName = "1.11.0"
     }
     buildTypes {
         release {
