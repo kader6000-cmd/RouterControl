@@ -383,6 +383,18 @@ class RouterClient {
                 lines.add("لقينا عناوين سرعة في صفحة الروتر نفسها: ${qosTags.joinToString(", ")}")
             } else if (mentions > 0) {
                 lines.add("كلمة QoS مذكورة $mentions مرة في صفحة الروتر، بس مفيش عنوان بيانات (lua) واضح ليها.")
+                // v1.11.2: show the actual text around each mention — the
+                // snippet reveals whether it is a QoS menu page (with its
+                // tag name) or something else entirely (e.g. WAN/ATM QoS).
+                val matches = Regex("qos", RegexOption.IGNORE_CASE).findAll(shell).take(3).toList()
+                for ((i, m) in matches.withIndex()) {
+                    val start = maxOf(0, m.range.first - 150)
+                    val end = minOf(shell.length, m.range.last + 500)
+                    val snippet = shell.substring(start, end)
+                        .replace("\r", " ").replace("\n", " ")
+                        .replace(Regex(" +"), " ").take(700)
+                    lines.add("مقتطف QoS ${i + 1}: ...$snippet...")
+                }
             } else {
                 lines.add("كلمة QoS مش موجودة خالص في صفحة الروتر الرئيسية.")
             }
