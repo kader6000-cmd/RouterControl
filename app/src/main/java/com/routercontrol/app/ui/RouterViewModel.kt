@@ -291,7 +291,10 @@ class RouterViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(loading = true, message = "بفحص عنوان صفحة التحكم الأبوي...") }
             val settings = store.loadSettings()
             val fetched = ParentalSync.fetchRules(client, settings)
-            val entries = fetched.entries
+            // QoS probe (v1.11.1): read-only scan for a speed-control page.
+            // Runs after fetchRules, when the session is fresh.
+            val qosEntry = client.probeQos(settings)
+            val entries = fetched.entries + qosEntry
             val tag = fetched.tag
             if (tag.isNotBlank()) {
                 store.saveSettings(settings.copy(parentalScript = tag))
