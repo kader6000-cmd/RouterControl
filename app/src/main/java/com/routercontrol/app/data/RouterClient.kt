@@ -349,6 +349,75 @@ class RouterClient {
     }
 
     /**
+     * QoS (speed control) probe — v1.11.1. READ ONLY: GETs only, no POSTs,
+     * no login of its own — it runs on the session the caller just
+     * established (runDiagnostics calls it right after fetchRules, when
+     * the session is fresh). Answers: does THIS firmware expose a
+     * QoS/bandwidth page, and under which tag?
+     *  1) Scan the shell HTML captured at login for "qos" mentions and
+     *     any *_lua.lua tag with qos/bandwidth/traffic in its name — the
+     *     router's own pages are the authoritative list (same idea as
+     *     the v1.2 parental discovery).
+     *  2) Try GET on a short list of candidate QoS data scripts and
+     *     record what each answers.
+     * A SessionTimeout on a candidate proves nothing by itself (on this
+     * firmware a missing _tag answers SessionTimeout too) — only a SUCC
+     * reply, or a tag found in the router's own pages, counts as
+     * "QoS is present". ok=true only in that case.
+     */
+    suspend fun probeQos(settings: RouterSettings): DiagnosticsEntry {
+        val lines = mutableListOf<String>()
+        var found = false
+        val shell = rootPageHtml
+        if (shell.isBlank()) {
+            lines.add("صفحة الروتر الرئيسية مش متسجلة في الجلسة دي — مفيش حاجة ندوّر فيها.")
+        } else {
+            val qosTags = extractLuaTags(shell).filter {
+                val lower = it.lowercase(Locale.US)
+                lower.contains("qos") || lower.contains("bandwidth") ||
+                    lower.contains("ratelimit") || lower.contains("traffic")
+            }
+            val mentions = Regex("qos", RegexOption.IGNORE_CASE).findAll(shell).count()
+            if (qosTags.isNotEmpty()) {
+                found = true
+                lines.add("لقينا عناوين سرعة في صفحة الروتر نفسها: ${qosTags.joinToString(", ")}")
+            } else if (mentions > 0) {
+                lines.add("كلمة QoS مذكورة $mentions مرة في صفحة الروتر، بس مفيش عنوان بيانات (lua) واضح ليها.")
+            } else {
+                lines.add("كلمة QoS مش موجودة خالص في صفحة الروتر الرئيسية.")
+            }
+        }
+        val candidates = listOf(
+            "qos_lua.lua",
+            "internet_qos_lua.lua",
+            "adv_qos_lua.lua",
+            "qos_cfg_lua.lua",
+            "qos_rule_lua.lua",
+            "bandwidth_lua.lua"
+        )
+        for (tag in candidates) {
+            val (code, body) = rawGet(settings, "?_type=menuData&_tag=$tag&_=${System.currentTimeMillis()}")
+            val verdict = when {
+                code == 0 -> "مفيش رد ($body)"
+                body.contains("<IF_ERRORSTR>SUCC</IF_ERRORSTR>") -> {
+                    found = true
+                    "SUCC — العنوان ده شغال"
+                }
+                body.contains("SessionTimeout") -> "SessionTimeout (ممكن العنوان غلط أو الجلسة منتهية)"
+                code == 404 || body.contains("404 Not Found") -> "404 — مفيش عنوان بالاسم ده"
+                else -> "HTTP $code — رد غير معروف"
+            }
+            lines.add("$tag: $verdict")
+        }
+        if (found) {
+            lines.add("الخلاصة: فيه QoS في الروتر — الخطوة الجاية نشوف بياناته وحقوله عشان نبني التحكم.")
+        } else {
+            lines.add("الخلاصة: مفيش دليل إن السوفت ده فيه تحكم في السرعة (QoS). الـ SessionTimeout لوحده مش دليل غياب — العنوان الغلط بيرد كده برضه.")
+        }
+        return DiagnosticsEntry("فحص السرعة (QoS)", lines.joinToString("\n"), found)
+    }
+
+    /**
      * Try one device data script in every request shape that could matter,
      * in order, and return the first body that is NOT a SessionTimeout
      * (or the last body tried). Shapes: (a) GET, millis guid, no token —
